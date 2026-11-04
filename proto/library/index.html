@@ -1,0 +1,738 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Notebook · Library (redesign)</title>
+<style>
+  /* Tokens and card patterns from the launched site (src/styles.css). */
+  :root {
+    --bg: #f6f6f3;
+    --surface: #ffffff;
+    --paper: #fffdf7;
+    --line: #e4e4e0;
+    --line-strong: #d3d4d0;
+    --text: #1d1f23;
+    --muted: #6b6f76;
+    --accent: #2f6fed;
+    --accent-soft: #e9f0fe;
+    --pen: #d9480f;
+    --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 4px 16px rgba(16, 24, 40, 0.06);
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    color: var(--text);
+    background: var(--bg);
+    font-size: 14px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  button, input { font: inherit; color: inherit; }
+  button { cursor: pointer; }
+  [hidden] { display: none !important; }
+  .muted { color: var(--muted); }
+  .small { font-size: 12.5px; }
+  .btn { border: 1px solid var(--line-strong); background: var(--surface); border-radius: 8px; padding: 6px 12px; font-weight: 500; white-space: nowrap; }
+  .btn:hover { background: #f3f3f0; }
+
+  .app-top { height: 52px; display: flex; align-items: center; gap: 12px; padding: 0 20px; border-bottom: 1px solid var(--line); background: rgba(246, 246, 243, 0.9); backdrop-filter: blur(8px); }
+  .brand { display: flex; align-items: center; gap: 8px; font-weight: 650; font-size: 16px; }
+  .logo { width: 26px; height: 26px; border-radius: 7px; background: var(--text); color: #fff; display: grid; place-items: center; font: 14px Georgia, serif; }
+  .crumbs { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); min-width: 0; margin-left: 8px; }
+  .crumbs button { background: none; border: 0; padding: 2px 5px; border-radius: 6px; color: var(--muted); }
+  .crumbs button:hover { background: rgba(0,0,0,.05); color: var(--text); }
+  .crumbs .here { color: var(--text); font-weight: 600; padding: 2px 5px; }
+  .spacer { flex: 1; }
+  .avatar { width: 24px; height: 24px; border-radius: 50%; background: #d9480f; color: #fff; font-size: 11.5px; font-weight: 600; display: grid; place-items: center; }
+
+  .shell { display: grid; grid-template-columns: 260px 1fr; height: calc(100% - 52px); }
+
+  /* ---------- sidebar */
+  .sidebar { background: var(--surface); border-right: 1px solid var(--line); overflow: auto; padding: 12px 8px 24px; display: flex; flex-direction: column; }
+  .sidebar h3 { margin: 4px 10px 8px; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); font-weight: 650; }
+  .tree, .tree ul { list-style: none; margin: 0; padding: 0; }
+  .tree > li + li { margin-top: 6px; }
+  .row-wrap { position: relative; }
+  .row { display: flex; align-items: center; gap: 7px; height: 30px; padding: 0 8px; width: 100%; border: 0; background: none; text-align: left; white-space: nowrap; font-size: 13.5px; border-radius: 7px; }
+  .row:hover { background: #f3f3f0; }
+  .row.sel { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  .row.drop, .folder-tile.drop { background: var(--accent-soft); box-shadow: inset 0 0 0 1.5px var(--accent); }
+  .row.no-drop { cursor: not-allowed; }
+  .chev { width: 14px; font-size: 10px; color: var(--muted); text-align: center; flex: none; border-radius: 4px; }
+  .chev:hover { background: rgba(0,0,0,.06); }
+  .chev.none { visibility: hidden; }
+  .row .label { overflow: hidden; text-overflow: ellipsis; flex: 1; }
+  .row .count { color: var(--muted); font-size: 12px; font-weight: 400; }
+  .row svg { width: 16px; height: 16px; flex: none; color: var(--muted); }
+  .row.sel svg { color: var(--accent); }
+  .row.lvl1 { padding-left: 28px; }
+  .row.lvl2 { padding-left: 48px; }
+  .row.lvl3 { padding-left: 68px; }
+  .row.lvl4 { padding-left: 88px; }
+  .row input { flex: 1; min-width: 0; border: 1px solid var(--accent); border-radius: 5px; padding: 2px 6px; font-size: 13px; outline: none; box-shadow: 0 0 0 3px var(--accent-soft); }
+  .row-add { position: absolute; right: 6px; top: 5px; width: 20px; height: 20px; border: 0; border-radius: 5px; background: transparent; color: var(--muted); font-size: 15px; line-height: 1; display: grid; place-items: center; opacity: 0; }
+  .row-wrap:hover .row-add, .row-add:focus-visible { opacity: 1; }
+  .row-add:hover { background: rgba(0,0,0,.07); color: var(--text); }
+  .row-wrap:hover .row .count { visibility: hidden; }
+
+  /* course rows: not folders — a course is something you join, and it links you with classmates */
+  .course-row { display: flex; align-items: center; gap: 9px; width: 100%; padding: 6px 8px; border: 0; background: none; border-radius: 9px; text-align: left; }
+  .course-row:hover { background: #f3f3f0; }
+  .course-row.sel { background: var(--accent-soft); }
+  .chip { width: 30px; height: 30px; border-radius: 8px; color: #fff; font-size: 10.5px; font-weight: 700; letter-spacing: 0.02em; display: grid; place-items: center; flex: none; }
+  .cname { display: flex; flex-direction: column; min-width: 0; flex: 1; line-height: 1.25; }
+  .cname b { font-size: 13.5px; font-weight: 650; }
+  .cname small { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .course-children { margin: 2px 0 4px; }
+  .join { margin-top: 10px; display: flex; align-items: center; gap: 9px; width: 100%; padding: 6px 8px; border: 1px dashed var(--line-strong); background: none; border-radius: 9px; color: var(--muted); font-size: 13px; }
+  .join:hover { color: var(--text); border-color: var(--muted); }
+  .join .plus { width: 30px; height: 30px; border-radius: 8px; border: 1px dashed var(--line-strong); display: grid; place-items: center; font-size: 16px; }
+  .join-form { margin-top: 10px; padding: 8px; border: 1px solid var(--line); border-radius: 9px; }
+  .join-form input { width: 100%; border: 1px solid var(--accent); border-radius: 6px; padding: 5px 8px; outline: none; box-shadow: 0 0 0 3px var(--accent-soft); text-transform: uppercase; }
+  .join-form p { margin: 6px 2px 0; font-size: 12px; color: var(--muted); }
+  .side-foot { margin-top: auto; padding: 18px 10px 0; }
+  .side-foot button { background: none; border: 0; padding: 0; color: var(--muted); font-size: 12px; text-decoration: underline; }
+
+  /* ---------- main */
+  .content { overflow: auto; padding: 28px clamp(18px, 3.5vw, 44px) 64px; position: relative; }
+  .content.drop { outline: 2px dashed var(--accent); outline-offset: -10px; }
+  .view-head { margin-bottom: 22px; display: flex; justify-content: space-between; align-items: flex-end; gap: 20px; }
+  .kicker { color: var(--accent); font-weight: 600; font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; }
+  h1 { margin: 2px 0 4px; font-size: 26px; letter-spacing: -0.02em; }
+  .sub { margin: 0; color: var(--muted); font-size: 13px; }
+  .grid { display: grid; gap: 18px; }
+  .grid + .grid { margin-top: 26px; }
+  .grid.docs { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
+  .grid.folders { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+
+  .course-head { display: flex; gap: 16px; align-items: center; }
+  .course-head .chip { width: 52px; height: 52px; border-radius: 13px; font-size: 14px; }
+  .peers { display: flex; align-items: center; gap: 8px; margin-top: 6px; color: var(--muted); font-size: 13px; }
+  .stack { display: flex; }
+  .stack span { width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--bg); margin-left: -6px; display: grid; place-items: center; color: #fff; font-size: 9.5px; font-weight: 700; }
+  .stack span:first-child { margin-left: 0; }
+
+  .folder-tile { display: flex; align-items: center; gap: 12px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; text-align: left; box-shadow: var(--shadow); transition: box-shadow .15s, transform .15s; }
+  .folder-tile:hover { box-shadow: 0 8px 24px rgba(16,24,40,.1); transform: translateY(-2px); }
+  .folder-tile svg { width: 34px; height: 34px; color: #8fa6cf; flex: none; }
+  .folder-tile b { display: block; font-weight: 600; }
+  .folder-tile span { color: var(--muted); font-size: 12.5px; }
+
+  .doc { border: 0; background: none; padding: 0; text-align: left; display: flex; flex-direction: column; gap: 9px; }
+  .doc[data-note] { cursor: grab; }
+  .doc.dragging { opacity: 0.4; }
+  .doc:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 8px; }
+  .cover { position: relative; border: 1px solid var(--line); background: #fff; overflow: hidden; box-shadow: var(--shadow); transition: transform .15s, box-shadow .15s; }
+  .doc:hover .cover { transform: translateY(-3px); box-shadow: 0 8px 24px rgba(16,24,40,.12); }
+  .cover.slides { aspect-ratio: 16 / 10; border-radius: 10px; background: #f1f1ee; }
+  .cover.slides .ph { position: absolute; inset: 10px 12px; background: #fff; border: 1px solid #e8e8e4; border-radius: 3px; }
+  .cover.slides .ph::before { content: ''; position: absolute; left: 10px; right: 30%; top: 12px; height: 7px; background: #d9dbe0; border-radius: 2px; box-shadow: 0 15px 0 -1px #ececea, 0 27px 0 -1px #ececea, 0 39px 0 -1px #ececea; }
+  .cover.note { aspect-ratio: 3 / 4; border-radius: 4px 10px 10px 4px; box-shadow: var(--shadow), inset 6px 0 0 rgba(0,0,0,.06); }
+  .cover.note.ruled { background: repeating-linear-gradient(#fff 0 17px, #dbe3ee 17px 18px); }
+  .cover.note.annotated { background: #f1f1ee; }
+  .cover.note.annotated .slide-mini { position: absolute; left: 12px; right: 12px; height: 26%; background: #fff; border: 1px solid #e8e8e4; border-radius: 3px; }
+  .cover.note.annotated .slide-mini::after { content: ''; position: absolute; left: 12%; right: 12%; bottom: 18%; border-bottom: 2px solid var(--pen); border-radius: 50%; }
+  .badge { position: absolute; left: 8px; top: 8px; background: rgba(29,31,35,.85); color: #fff; font-size: 11.5px; font-weight: 600; padding: 2px 7px; border-radius: 6px; z-index: 1; }
+  .badge.pdf { left: auto; right: 8px; top: auto; bottom: 8px; font-size: 10.5px; letter-spacing: .04em; }
+  .ink-badge { position: absolute; right: 8px; top: 8px; background: #fff; color: var(--pen); font-size: 11px; font-weight: 600; padding: 1px 6px; border-radius: 5px; border: 1px solid #f6d5c6; z-index: 1; }
+  .doc-meta b { display: block; font-weight: 550; line-height: 1.3; }
+  .doc-meta span { color: var(--muted); font-size: 12.5px; }
+  .doc-meta .from { color: var(--accent); }
+  .empty { padding: 26px 18px; border: 1px dashed var(--line-strong); border-radius: 12px; color: var(--muted); text-align: center; }
+
+  .open-doc .pages { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 16px; }
+  .page-card { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; position: relative; padding: 0; text-align: left; }
+  .page-card .thumb { aspect-ratio: 16 / 10; background: #f1f1ee; position: relative; border-bottom: 1px solid var(--line); }
+  .page-card .thumb .ph { position: absolute; inset: 10px 12px; background: #fff; border-radius: 3px; border: 1px solid #e8e8e4; }
+  .page-card .thumb .ink { position: absolute; left: 14px; right: 14px; bottom: 14px; height: 16px; border-bottom: 2px solid var(--pen); }
+  .page-card .meta { padding: 7px 10px; font-size: 12.5px; color: var(--muted); }
+  .page-card .pg { color: var(--text); font-weight: 600; }
+  .page-card.edited .meta .pg::after { content: ' · edited'; color: var(--accent); font-weight: 500; }
+  .page-card.edited::before { content: ''; position: absolute; top: 8px; right: 8px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); z-index: 1; }
+  .paper-page { aspect-ratio: 3 / 4; border-radius: 4px 8px 8px 4px; border: 1px solid var(--line); background: repeating-linear-gradient(#fff 0 13px, #dbe3ee 13px 14px); box-shadow: var(--shadow); }
+  .paper-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 14px; }
+  .paper-no { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .snips { background: var(--paper); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); overflow: hidden; }
+  .snip { display: grid; grid-template-columns: 112px 1fr; gap: 14px; padding: 12px 16px; border-bottom: 1px solid #f0eee6; }
+  .snip:last-child { border-bottom: 0; }
+  .snip .src { aspect-ratio: 16 / 10; border-radius: 6px; background: #f1f1ee; border: 1px solid var(--line); position: relative; }
+  .snip .src::before { content: ''; position: absolute; inset: 7px; background: #fff; border-radius: 3px; }
+  .snip .src::after { content: ''; position: absolute; right: 10px; bottom: 10px; width: 34px; height: 12px; border-bottom: 2px solid var(--pen); border-radius: 50%; }
+  .snip .label { font-size: 12.5px; color: var(--muted); margin-bottom: 3px; }
+  .snip p { margin: 0; }
+  .tag { font-size: 11.5px; padding: 1px 7px; border-radius: 5px; background: var(--accent-soft); color: var(--accent); font-weight: 600; margin-right: 6px; }
+  .inline-link { background: none; border: 0; color: var(--accent); font-weight: 500; padding: 0; }
+
+  .ctx { position: fixed; z-index: 40; min-width: 168px; background: var(--surface); border: 1px solid var(--line); border-radius: 9px; box-shadow: 0 10px 30px rgba(16,24,40,.14); padding: 4px; }
+  .ctx button { display: block; width: 100%; text-align: left; border: 0; background: none; padding: 7px 10px; border-radius: 6px; font-size: 13px; }
+  .ctx button:hover { background: #f3f3f0; }
+  .ctx button.danger { color: #c92a2a; }
+  .ctx .ctx-title { padding: 6px 10px 4px; font-size: 11.5px; color: var(--muted); font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+  .ctx button:disabled { color: var(--muted); cursor: default; background: none; }
+
+  /* touch: no hover, no right-click — long-press opens the menu, long-press + drag lifts a note */
+  .row, .course-row, .doc, .folder-tile, .chev, .row-add { -webkit-tap-highlight-color: transparent; -webkit-touch-callout: none; user-select: none; -webkit-user-select: none; touch-action: manipulation; }
+  .doc.lifted .cover, .folder-tile.lifted, .row.lifted { transform: scale(1.03); box-shadow: 0 12px 30px rgba(16,24,40,.18); }
+  .ghost { position: fixed; z-index: 50; pointer-events: none; opacity: .92; transform: scale(.55) rotate(-2deg); transform-origin: 0 0; transition: none; }
+  .ghost .cover { box-shadow: 0 18px 40px rgba(16,24,40,.25); }
+
+  .side-toggle { display: none; width: 36px; height: 36px; border: 0; border-radius: 8px; background: none; place-items: center; }
+  .side-toggle:hover { background: rgba(0,0,0,.05); }
+  .side-toggle svg { width: 20px; height: 20px; }
+  .scrim { display: none; }
+
+  @media (hover: none), (pointer: coarse) {
+    .shell { grid-template-columns: 300px 1fr; }
+    .drop-hint { left: 300px; }
+    .row { height: 42px; font-size: 15px; padding-right: 44px; }
+    .row.lvl1 { padding-left: 30px; }
+    .row.lvl2 { padding-left: 52px; }
+    .row.lvl3 { padding-left: 74px; }
+    .row.lvl4 { padding-left: 96px; }
+    .chev { width: 24px; height: 32px; display: grid; place-items: center; font-size: 12px; margin-left: -6px; }
+    .course-row { padding: 9px 8px; }
+    .cname b { font-size: 15px; }
+    .cname small { font-size: 13px; }
+    .row-add { opacity: .8; width: 34px; height: 34px; top: 4px; font-size: 20px; }
+    .row-wrap:hover .row .count { visibility: visible; }
+    .row .count { font-size: 13px; }
+    .btn { padding: 10px 16px; font-size: 15px; }
+    .ctx { min-width: 220px; }
+    .ctx button { padding: 12px 14px; font-size: 15px; }
+    .join { padding: 9px 8px; font-size: 15px; }
+    .folder-tile { padding: 18px; }
+    .crumbs button, .crumbs .here { padding: 6px 7px; }
+  }
+
+  /* tablet portrait: the sidebar slides over the content */
+  @media (max-width: 1000px) {
+    .shell { grid-template-columns: 1fr; }
+    .sidebar { position: fixed; top: 52px; bottom: 0; left: 0; width: min(320px, 85vw); z-index: 26; transform: translateX(-102%); transition: transform .22s ease; box-shadow: 0 10px 40px rgba(16,24,40,.18); }
+    body.side-open .sidebar { transform: none; }
+    body.side-open .scrim { display: block; position: fixed; inset: 52px 0 0 0; background: rgba(16,24,40,.18); z-index: 25; }
+    .side-toggle { display: grid; }
+    .drop-hint { left: 0; }
+  }
+
+  .drop-hint { position: fixed; left: 260px; right: 0; bottom: 22px; display: grid; place-items: center; pointer-events: none; z-index: 20; }
+  .drop-hint div { background: var(--surface); border: 1px solid var(--accent); border-radius: 12px; padding: 10px 16px; box-shadow: 0 10px 30px rgba(16,24,40,.12); text-align: center; color: var(--accent); font-weight: 600; font-size: 13px; }
+  .drop-hint small { display: block; font-weight: 400; color: var(--muted); }
+  .toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: var(--text); color: #fff; padding: 9px 14px; border-radius: 9px; font-size: 13px; z-index: 30; }
+</style>
+</head>
+<body>
+  <header class="app-top">
+    <button class="side-toggle" id="side-toggle" aria-label="Show courses and folders"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2.5" y="3.5" width="15" height="13" rx="2.5"/><path d="M8 3.5v13"/></svg></button>
+    <div class="brand"><span class="logo">N</span> Notebook</div>
+    <nav class="crumbs" id="crumbs" aria-label="Breadcrumb"></nav>
+    <div class="spacer"></div>
+    <span class="avatar" title="Thomas">T</span>
+  </header>
+
+  <div class="shell">
+    <aside class="sidebar" aria-label="Courses and folders">
+      <h3>Courses</h3>
+      <ul class="tree" id="tree"></ul>
+      <div id="join"></div>
+      <div class="side-foot"><button id="reset">Reset sample data</button></div>
+    </aside>
+    <main class="content" id="content"></main>
+  </div>
+
+  <div class="scrim" id="scrim"></div>
+  <div class="drop-hint" id="drop-hint" hidden><div id="drop-text"></div></div>
+  <div class="ctx" id="ctx" hidden></div>
+  <div class="toast" id="toast" hidden></div>
+
+<script>
+  // ---------- sample data
+  const KNN_SNIPS = [
+    { slide: 14, when: 'Just now', text: 'Distance metric matters: with unscaled features, Euclidean distance is dominated by the largest-range variable. Standardize first.' },
+    { slide: 9, when: 'Today, 10:12', text: 'Worked example: k = 3 with two votes for class B, so the prediction is B even though one neighbour is closer to A.' },
+    { slide: 6, when: 'Yesterday · 21:40', text: 'Training is just storing the data; all the cost is paid at prediction time (search over every point).' },
+  ];
+  const COURSES = [
+    {
+      id: 'comp2211', code: 'COMP2211', name: 'Exploring Artificial Intelligence', color: '#2f6fed', classmates: 42,
+      lectures: [
+        ['Course logistics', 30], ['Introduction to AI', 33], ['Advanced Python for AI', 99], ['Naive Bayes', 41],
+        ['K-Nearest Neighbors', 36], ['K-Means Clustering', 45], ['ANN: Perceptron', 41], ['ANN: Multilayer Perceptron', 69],
+        ['Image Processing Fundamentals', 100], ['Convolutional Neural Networks', 49], ['Minimax', 55], ['AI Ethics', 26],
+        ['Supplement: Model Evaluation', 12],
+      ].map(([title, slides], n) => ({ id: `comp2211-l${n}`, n, title, slides })),
+      notes: [
+        { id: 'comp2211-n-l4', kind: 'annotated', lecture: 4, title: 'L4 K-Nearest Neighbors', sub: '3 edited slides · just now', edited: [6, 9, 14], snips: KNN_SNIPS },
+        { id: 'comp2211-n-alex', kind: 'notebook', title: 'Alex’s COMP2211 notes', sub: '48 pages · 13 h ago', pages: 48 },
+        { id: 'comp2211-n-rev', kind: 'notebook', title: 'Revision — neural networks', sub: '12 pages · 2 days ago', pages: 12 },
+        { id: 'comp2211-n-l0', kind: 'annotated', lecture: 0, title: 'L0 Course logistics', sub: '1 edited slide · 3 days ago', edited: [2], snips: [{ slide: 2, when: '3 days ago', text: 'Midterm in week 8; two lowest labs dropped.' }] },
+      ],
+    },
+    {
+      id: 'comp3311', code: 'COMP3311', name: 'Database Management Systems', color: '#0c8599', classmates: 57,
+      lectures: [['Introduction', 28], ['ER Model', 44], ['Relational Model', 39], ['Relational Algebra', 52], ['SQL I', 61]].map(([title, slides], n) => ({ id: `comp3311-l${n}`, n, title, slides })),
+      notes: [],
+    },
+  ];
+  const course = (id) => COURSES.find((c) => c.id === id);
+  const findDoc = (docId) => {
+    for (const c of COURSES) {
+      const l = c.lectures.find((x) => x.id === docId);
+      if (l) return { c, kind: 'slides', l };
+      const n = c.notes.find((x) => x.id === docId);
+      if (n) return { c, kind: 'note', n };
+    }
+    return null;
+  };
+  const noteFor = (c, n) => c.notes.find((x) => x.kind === 'annotated' && x.lecture === n);
+
+  // ---------- user folders (inside My notes only), saved in this browser
+  const KEY = 'proto.library.v2';
+  const SAMPLE = { folders: [{ id: 'f-mid', course: 'comp2211', parent: null, name: 'Midterm revision' }], noteFolder: { 'comp2211-n-rev': 'f-mid' } };
+  const load = () => { try { return JSON.parse(localStorage.getItem(KEY)) || structuredClone(SAMPLE); } catch { return structuredClone(SAMPLE); } };
+  let S = load();
+  const save = () => localStorage.setItem(KEY, JSON.stringify(S));
+  const folderById = (id) => S.folders.find((f) => f.id === id);
+  const subfolders = (cid, parent) => S.folders.filter((f) => f.course === cid && f.parent === parent).sort((a, b) => a.name.localeCompare(b.name));
+  const folderOf = (noteId) => (folderById(S.noteFolder[noteId]) ? S.noteFolder[noteId] : null);
+  const notesIn = (c, fid) => c.notes.filter((n) => folderOf(n.id) === fid);
+  const folderPath = (fid) => { const out = []; let f = folderById(fid); while (f) { out.unshift(f); f = folderById(f.parent); } return out; };
+  const isInside = (fid, ancestor) => folderPath(fid).some((f) => f.id === ancestor);
+
+  // ---------- icons
+  const ICON = {
+    notes: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M1.8 3.8h4l1.2 1.4h7.2v7.3H1.8z"/><path d="M5 9.2h6"/></svg>',
+    lectures: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M1.8 3.8h4l1.2 1.4h7.2v7.3H1.8z"/><path d="M6.5 8v3l2.6-1.5z" fill="currentColor" stroke="none"/></svg>',
+    folder: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M1.8 3.8h4l1.2 1.4h7.2v7.3H1.8z"/></svg>',
+    bigFolder: '<svg viewBox="0 0 34 34" fill="currentColor"><path d="M2 7.5a2 2 0 0 1 2-2h8.5l2.6 3H30a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2z"/></svg>',
+  };
+  const chip = (c) => `<span class="chip" style="background:${c.color}">${c.code.replace(/[A-Z]+/, '')}</span>`;
+  const esc = (s) => s.replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[ch]);
+
+  // ---------- routing:  #<cid>  #<cid>/notes  #<cid>/notes/<folderId>  #<cid>/lectures  #doc/<docId>
+  let route;
+  const parseHash = () => {
+    const h = decodeURIComponent(location.hash.slice(1));
+    if (h.startsWith('doc/') && findDoc(h.slice(4))) { const d = findDoc(h.slice(4)); return { type: 'doc', doc: h.slice(4), course: d.c.id }; }
+    const [cid, folder, sub] = h.split('/');
+    if (course(cid)) {
+      if (folder === 'notes') return { type: 'folder', course: cid, folder, sub: folderById(sub)?.course === cid ? sub : null };
+      if (folder === 'lectures') return { type: 'folder', course: cid, folder, sub: null };
+      return { type: 'course', course: cid };
+    }
+    return { type: 'folder', course: 'comp2211', folder: 'notes', sub: null };
+  };
+  const navOf = (r) => r.type === 'doc' ? `doc/${r.doc}` : r.type === 'course' ? r.course : `${r.course}/${r.folder}${r.sub ? '/' + r.sub : ''}`;
+  const go = (nav) => { if (location.hash.slice(1) === nav) render(); else location.hash = nav; };
+
+  // ---------- UI state
+  const expanded = new Set(['comp2211', 'notes:comp2211']);
+  let creating = null; // { course, parent }
+  let renaming = null; // folder id
+  let joining = false;
+  let dragNote = null; // { id, course }
+
+  // The folder that should look selected in the sidebar.
+  const selectedNav = () => {
+    if (route.type !== 'doc') return navOf(route);
+    const d = findDoc(route.doc);
+    if (d.kind === 'slides') return `${d.c.id}/lectures`;
+    const f = folderOf(d.n.id);
+    return `${d.c.id}/notes${f ? '/' + f : ''}`;
+  };
+
+  // ---------- sidebar
+  function folderRows(c, parent, depth) {
+    let html = subfolders(c.id, parent).map((f) => {
+      const kids = subfolders(c.id, f.id).length > 0 || (creating && creating.parent === f.id);
+      const open = expanded.has(f.id);
+      const nav = `${c.id}/notes/${f.id}`;
+      const label = renaming === f.id ? `<input class="name-input" value="${esc(f.name)}" aria-label="Folder name">` : `<span class="label">${esc(f.name)}</span>`;
+      const n = notesIn(c, f.id).length;
+      return `<li><div class="row-wrap"><button class="row lvl${depth} ${selectedNav() === nav ? 'sel' : ''}" data-nav="${nav}" data-drop="${c.id}|${f.id}" data-ctx="${c.id}|${f.id}">${kids ? `<span class="chev" data-toggle="${f.id}">${open ? '▾' : '▸'}</span>` : '<span class="chev none"></span>'}${ICON.folder}${label}${n ? `<span class="count">${n}</span>` : ''}</button><button class="row-add" data-newfolder="${c.id}|${f.id}" title="New folder in ${esc(f.name)}" aria-label="New folder in ${esc(f.name)}">+</button></div>${kids && open ? `<ul>${folderRows(c, f.id, depth + 1)}</ul>` : ''}</li>`;
+    }).join('');
+    if (creating && creating.course === c.id && creating.parent === parent) {
+      html += `<li><div class="row lvl${depth}"><span class="chev none"></span>${ICON.folder}<input class="name-input" placeholder="Folder name" aria-label="New folder name"></div></li>`;
+    }
+    return html;
+  }
+
+  function renderTree() {
+    const sel = selectedNav();
+    document.getElementById('tree').innerHTML = COURSES.map((c) => {
+      const open = expanded.has(c.id);
+      const notesOpen = expanded.has(`notes:${c.id}`);
+      const hasFolders = subfolders(c.id, null).length > 0 || (creating && creating.course === c.id && creating.parent === null);
+      return `<li>
+        <button class="course-row ${sel === c.id ? 'sel' : ''}" data-nav="${c.id}" title="${c.classmates} classmates in ${c.code}">
+          <span class="chev" data-toggle="${c.id}">${open ? '▾' : '▸'}</span>${chip(c)}
+          <span class="cname"><b>${c.code}</b><small>${c.name}</small></span>
+        </button>
+        ${open ? `<ul class="course-children">
+          <li><div class="row-wrap"><button class="row lvl1 ${sel === `${c.id}/notes` ? 'sel' : ''}" data-nav="${c.id}/notes" data-drop="${c.id}|" data-ctx="${c.id}|">${hasFolders ? `<span class="chev" data-toggle="notes:${c.id}">${notesOpen ? '▾' : '▸'}</span>` : '<span class="chev none"></span>'}${ICON.notes}<span class="label">My notes</span><span class="count">${c.notes.length}</span></button><button class="row-add" data-newfolder="${c.id}|" title="New folder in My notes" aria-label="New folder in My notes">+</button></div>
+            ${hasFolders && notesOpen ? `<ul>${folderRows(c, null, 2)}</ul>` : ''}</li>
+          <li><div class="row-wrap"><button class="row lvl1 ${sel === `${c.id}/lectures` ? 'sel' : ''}" data-nav="${c.id}/lectures" data-lectures="${c.id}"><span class="chev none"></span>${ICON.lectures}<span class="label">Lectures</span><span class="count">${c.lectures.length}</span></button></div></li>
+        </ul>` : ''}
+      </li>`;
+    }).join('');
+
+    document.getElementById('join').innerHTML = joining
+      ? `<div class="join-form"><input class="join-input" placeholder="Course code, e.g. MATH2411" aria-label="Course code"><p>Joining a course connects your notes with classmates in it.</p></div>`
+      : `<button class="join" data-join><span class="plus">+</span>Join a course</button>`;
+
+    const input = document.querySelector('.sidebar .name-input');
+    if (input) wireNameInput(input);
+    const ji = document.querySelector('.join-input');
+    if (ji) wireJoinInput(ji);
+  }
+
+  function wireNameInput(input) {
+    input.focus();
+    input.select();
+    let done = false;
+    const finish = (commit) => {
+      if (done) return;
+      done = true;
+      const name = input.value.trim();
+      if (commit && name) {
+        if (renaming) { folderById(renaming).name = name; toast(`Renamed to “${name}”`); }
+        else {
+          const f = { id: 'f-' + Math.random().toString(36).slice(2, 8), course: creating.course, parent: creating.parent, name };
+          S.folders.push(f);
+          expanded.add(`notes:${f.course}`);
+          if (f.parent) expanded.add(f.parent);
+          save();
+          creating = null;
+          renaming = null;
+          return go(`${f.course}/notes/${f.id}`);
+        }
+        save();
+      }
+      creating = null;
+      renaming = null;
+      render();
+    };
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') finish(true); if (e.key === 'Escape') finish(false); });
+    input.addEventListener('blur', () => finish(true));
+  }
+  function wireJoinInput(input) {
+    input.focus();
+    let done = false;
+    const finish = (commit) => {
+      if (done) return;
+      done = true;
+      const code = input.value.trim().toUpperCase();
+      joining = false;
+      if (commit && code) toast(`Asked to join ${code} (prototype: not saved)`);
+      renderTree();
+    };
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') finish(true); if (e.key === 'Escape') finish(false); });
+    input.addEventListener('blur', () => finish(false));
+  }
+
+  // ---------- main area
+  const noteCard = (n) => {
+    const cover = n.kind === 'annotated'
+      ? `<div class="cover note annotated">${n.edited.slice(0, 3).map((_, i) => `<div class="slide-mini" style="top:${12 + i * 31}%"></div>`).join('')}<span class="badge">L${n.lecture}</span></div>`
+      : '<div class="cover note ruled"></div>';
+    const from = n.kind === 'annotated' ? '<span class="from">From slides</span> · ' : '';
+    return `<button class="doc" data-doc="${n.id}" data-note="${n.id}" aria-label="${esc(n.title)}">${cover}<div class="doc-meta"><b>${esc(n.title)}</b><span>${from}${n.sub}</span></div></button>`;
+  };
+  const slideCard = (c, l) => {
+    const note = noteFor(c, l.n);
+    return `<button class="doc" data-doc="${l.id}" aria-label="Lecture ${l.n}: ${esc(l.title)}"><div class="cover slides"><div class="ph"></div><span class="badge">L${l.n}</span>${note ? `<span class="ink-badge">✎ ${note.edited.length}</span>` : ''}<span class="badge pdf">PDF</span></div><div class="doc-meta"><b>${esc(l.title)}</b><span>${l.slides} slides${note ? ` · you wrote on ${note.edited.length}` : ''}</span></div></button>`;
+  };
+  const folderTile = (c, f) => {
+    const items = subfolders(c.id, f.id).length + notesIn(c, f.id).length;
+    return `<button class="folder-tile" data-nav="${c.id}/notes/${f.id}" data-drop="${c.id}|${f.id}" data-ctx="${c.id}|${f.id}">${ICON.bigFolder}<div><b>${esc(f.name)}</b><span>${items} item${items === 1 ? '' : 's'}</span></div></button>`;
+  };
+  const crumbBtn = (label, nav) => `<button data-nav="${nav}">${esc(label)}</button><span>/</span>`;
+  const notesCrumbs = (c, fid, last) => {
+    let out = crumbBtn(c.code, c.id);
+    const path = fid ? folderPath(fid) : [];
+    out += last || path.length ? crumbBtn('My notes', `${c.id}/notes`) : '<span class="here">My notes</span>';
+    path.forEach((f, i) => { out += i === path.length - 1 && !last ? `<span class="here">${esc(f.name)}</span>` : crumbBtn(f.name, `${c.id}/notes/${f.id}`); });
+    if (last) out += `<span class="here">${esc(last)}</span>`;
+    return out;
+  };
+
+  function renderContent() {
+    const el = document.getElementById('content');
+    const crumbs = document.getElementById('crumbs');
+    const c = course(route.course);
+
+    if (route.type === 'course') {
+      crumbs.innerHTML = `<span class="here">${c.code}</span>`;
+      const colors = ['#e8590c', '#2b8a3e', '#7048e8', '#c2255c', '#1971c2'];
+      el.innerHTML = `<div class="view-head"><div class="course-head">${chip(c)}<div><div class="kicker">Course</div><h1>${c.name}</h1>
+          <div class="peers"><span class="stack">${colors.map((col, i) => `<span style="background:${col}">${'JMSKR'[i]}</span>`).join('')}</span>${c.classmates} classmates in ${c.code}</div></div></div></div>
+        <div class="grid folders">
+          <button class="folder-tile" data-nav="${c.id}/notes" data-drop="${c.id}|">${ICON.bigFolder}<div><b>My notes</b><span>${c.notes.length} notes${subfolders(c.id, null).length ? ` · ${subfolders(c.id, null).length} folders` : ''}</span></div></button>
+          <button class="folder-tile" data-nav="${c.id}/lectures">${ICON.bigFolder}<div><b>Lectures</b><span>${c.lectures.length} slide decks</span></div></button>
+        </div>`;
+    } else if (route.type === 'folder' && route.folder === 'notes') {
+      const fid = route.sub;
+      const f = fid && folderById(fid);
+      crumbs.innerHTML = notesCrumbs(c, fid);
+      const folders = subfolders(c.id, fid || null);
+      const notes = notesIn(c, fid || null);
+      el.innerHTML = `<div class="view-head"><div><div class="kicker">${c.code}${f ? ' · My notes' : ''}</div><h1>${f ? esc(f.name) : 'My notes'}</h1>
+          <p class="sub">${f ? 'Drag notes here to file them.' : 'Newest first. Writing on a lecture’s slides adds a note here.'}</p></div>
+          <button class="btn" data-newfolder="${c.id}|${fid || ''}">New folder</button></div>
+        ${folders.length ? `<div class="grid folders">${folders.map((sf) => folderTile(c, sf)).join('')}</div>` : ''}
+        ${notes.length ? `<div class="grid docs">${notes.map(noteCard).join('')}</div>` : ''}
+        ${!folders.length && !notes.length ? `<div class="empty">${f ? 'This folder is empty. Drag notes onto it to file them here.' : 'No notes yet. Open a lecture and write on a slide, or drop a notes PDF here.'}</div>` : ''}`;
+    } else if (route.type === 'folder') {
+      crumbs.innerHTML = crumbBtn(c.code, c.id) + '<span class="here">Lectures</span>';
+      el.innerHTML = `<div class="view-head"><div><div class="kicker">${c.code}</div><h1>Lectures</h1><p class="sub">Official slides from the course. Drop a lecture PDF here to add one.</p></div></div>
+        <div class="grid docs">${c.lectures.map((l) => slideCard(c, l)).join('')}</div>`;
+    } else {
+      const d = findDoc(route.doc);
+      if (d.kind === 'slides') {
+        crumbs.innerHTML = crumbBtn(c.code, c.id) + crumbBtn('Lectures', `${c.id}/lectures`) + `<span class="here">L${d.l.n} ${esc(d.l.title)}</span>`;
+        const note = noteFor(c, d.l.n);
+        const edited = new Set(note ? note.edited : []);
+        el.innerHTML = `<div class="open-doc"><div class="view-head"><div><div class="kicker">Lecture slides · PDF</div><h1>L${d.l.n} ${esc(d.l.title)}</h1><p class="sub">${d.l.slides} slides${note ? ` · your edits are in <button class="inline-link" data-doc="${note.id}">My notes → ${esc(note.title)}</button>` : ' · write on any slide to start a note'}</p></div></div><div class="pages">${Array.from({ length: d.l.slides }, (_, i) => i + 1).map((p) => `<button class="page-card${edited.has(p) ? ' edited' : ''}"><div class="thumb"><div class="ph"></div>${edited.has(p) ? '<span class="ink"></span>' : ''}</div><div class="meta"><span class="pg">${p}</span></div></button>`).join('')}</div></div>`;
+      } else {
+        crumbs.innerHTML = notesCrumbs(c, folderOf(d.n.id), d.n.title);
+        if (d.n.kind === 'annotated') {
+          const lec = c.lectures[d.n.lecture];
+          el.innerHTML = `<div class="open-doc"><div class="view-head"><div><div class="kicker">My note · from slides</div><h1>${esc(d.n.title)}</h1><p class="sub">${d.n.sub} · <button class="inline-link" data-doc="${lec.id}">Open the slides</button></p></div></div><div class="snips">${d.n.snips.map((s) => `<div class="snip"><div class="src"></div><div><div class="label"><span class="tag">Slide ${s.slide}</span>${s.when}</div><p>${esc(s.text)}</p></div></div>`).join('')}</div></div>`;
+        } else {
+          el.innerHTML = `<div class="open-doc"><div class="view-head"><div><div class="kicker">My note · notebook</div><h1>${esc(d.n.title)}</h1><p class="sub">${d.n.sub}</p></div></div><div class="paper-grid">${Array.from({ length: Math.min(d.n.pages, 24) }, (_, i) => `<div><div class="paper-page"></div><div class="paper-no">Page ${i + 1}</div></div>`).join('')}</div></div>`;
+        }
+      }
+    }
+  }
+
+  function render() {
+    route = parseHash();
+    expanded.add(route.course);
+    if (route.type === 'folder' && route.sub) { expanded.add(`notes:${route.course}`); folderPath(route.sub).forEach((f) => f.parent && expanded.add(f.parent)); }
+    if (route.type === 'doc') { const d = findDoc(route.doc); if (d.kind === 'note' && folderOf(d.n.id)) { expanded.add(`notes:${d.c.id}`); folderPath(folderOf(d.n.id)).forEach((f) => expanded.add(f.parent || `notes:${d.c.id}`)); } }
+    renderTree();
+    renderContent();
+  }
+
+  // ---------- folder actions
+  function newFolder(cid, parent) {
+    creating = { course: cid, parent: parent || null };
+    renaming = null;
+    expanded.add(cid);
+    expanded.add(`notes:${cid}`);
+    if (parent) expanded.add(parent);
+    renderTree();
+  }
+  function renameFolder(fid) { renaming = fid; creating = null; renderTree(); }
+  function deleteFolder(fid) {
+    const f = folderById(fid);
+    // Nothing is lost: notes and subfolders move up to the parent.
+    S.folders.forEach((x) => { if (x.parent === fid) x.parent = f.parent; });
+    Object.keys(S.noteFolder).forEach((k) => { if (S.noteFolder[k] === fid) { if (f.parent) S.noteFolder[k] = f.parent; else delete S.noteFolder[k]; } });
+    S.folders = S.folders.filter((x) => x.id !== fid);
+    save();
+    const parentName = f.parent ? folderById(f.parent).name : 'My notes';
+    toast(`Deleted “${f.name}”. Its notes moved to ${parentName}.`);
+    if (route.type === 'folder' && route.sub && (route.sub === fid || !folderById(route.sub))) return go(`${f.course}/notes${f.parent ? '/' + f.parent : ''}`);
+    render();
+  }
+  function moveNote(noteId, cid, fid) {
+    if (fid) S.noteFolder[noteId] = fid; else delete S.noteFolder[noteId];
+    save();
+    toast(`Moved to ${fid ? folderById(fid).name : 'My notes'}`);
+    render();
+  }
+
+  // ---------- feedback helpers
+  const hint = document.getElementById('drop-hint');
+  const dropText = document.getElementById('drop-text');
+  const toastEl = document.getElementById('toast');
+  const toast = (m) => { toastEl.textContent = m; toastEl.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => (toastEl.hidden = true), 2800); };
+  const clearDrop = () => { document.querySelectorAll('.drop, .no-drop').forEach((x) => x.classList.remove('drop', 'no-drop')); hint.hidden = true; };
+
+  // ---------- sidebar drawer (tablet portrait)
+  const setSide = (open) => document.body.classList.toggle('side-open', open);
+  document.getElementById('side-toggle').addEventListener('click', () => setSide(!document.body.classList.contains('side-open')));
+  document.getElementById('scrim').addEventListener('click', () => setSide(false));
+
+  // ---------- taps
+  let suppressClickOn = null; // the element a long-press or drag just ended on; its trailing click is ignored
+  document.addEventListener('click', (e) => {
+    if (suppressClickOn) { const hit = suppressClickOn.contains(e.target); suppressClickOn = null; if (hit) { e.preventDefault(); e.stopPropagation(); return; } }
+    hideMenu(e);
+    const tog = e.target.closest('[data-toggle]');
+    if (tog) { e.stopPropagation(); const k = tog.dataset.toggle; expanded.has(k) ? expanded.delete(k) : expanded.add(k); return renderTree(); }
+    const nf = e.target.closest('[data-newfolder]');
+    if (nf) { const [cid, parent] = nf.dataset.newfolder.split('|'); setSide(true); return newFolder(cid, parent); }
+    if (e.target.closest('[data-join]')) { joining = true; return renderTree(); }
+    if (e.target.closest('.name-input, .join-input')) return;
+    const nav = e.target.closest('[data-nav]');
+    if (nav) { if (nav.closest('.sidebar') && !nav.classList.contains('course-row')) setSide(false); return go(nav.dataset.nav); }
+    const d = e.target.closest('[data-doc]');
+    if (d) return go(`doc/${d.dataset.doc}`);
+  }, true);
+  document.getElementById('reset').addEventListener('click', () => { S = structuredClone(SAMPLE); save(); toast('Sample data restored'); go('comp2211/notes'); });
+
+  // ---------- menu: right-click with a mouse, long-press with a finger or pen
+  const ctx = document.getElementById('ctx');
+  function hideMenu(e) { if (!e || !e.target.closest('#ctx')) ctx.hidden = true; }
+  function showMenu(items, x, y, title) {
+    ctx.innerHTML = (title ? `<div class="ctx-title">${esc(title)}</div>` : '') + items.map((it, i) => `<button data-i="${i}" class="${it.cls || ''}" ${it.disabled ? 'disabled' : ''}>${it.label}</button>`).join('');
+    ctx.querySelectorAll('button').forEach((b) => b.addEventListener('click', (ev) => { ev.stopPropagation(); const it = items[+b.dataset.i]; if (it.keep) return it.run(); ctx.hidden = true; it.run(); }));
+    ctx.hidden = false;
+    const r = ctx.getBoundingClientRect();
+    ctx.style.left = Math.max(8, Math.min(x, innerWidth - r.width - 8)) + 'px';
+    ctx.style.top = Math.max(60, Math.min(y, innerHeight - r.height - 8)) + 'px';
+  }
+  function moveMenu(noteId, x, y) {
+    const d = findDoc(noteId);
+    const here = folderOf(noteId);
+    const list = [{ id: null, name: 'My notes', depth: 0 }];
+    const walk = (parent, depth) => subfolders(d.c.id, parent).forEach((f) => { list.push({ id: f.id, name: f.name, depth }); walk(f.id, depth + 1); });
+    walk(null, 1);
+    showMenu(list.map((f) => ({ label: `${'&nbsp;&nbsp;&nbsp;&nbsp;'.repeat(f.depth)}${f.id === here ? '✓ ' : ''}${esc(f.name)}`, disabled: f.id === here, run: () => moveNote(noteId, d.c.id, f.id) })), x, y, 'Move to');
+  }
+  function menuFor(el, x, y) {
+    if (el.dataset.note) {
+      const id = el.dataset.note;
+      return showMenu([{ label: 'Open', run: () => go(`doc/${id}`) }, { label: 'Move to…', keep: true, run: () => moveMenu(id, x, y) }], x, y, findDoc(id).n.title);
+    }
+    const [cid, fid] = el.dataset.ctx.split('|');
+    const items = [{ label: fid ? 'New folder inside' : 'New folder', run: () => { setSide(true); newFolder(cid, fid); } }];
+    if (fid) items.push({ label: 'Rename', run: () => { setSide(true); renameFolder(fid); } }, { label: 'Delete folder', cls: 'danger', run: () => deleteFolder(fid) });
+    showMenu(items, x, y, fid ? folderById(fid).name : 'My notes');
+  }
+  document.addEventListener('contextmenu', (e) => {
+    if (press && press.touch) { e.preventDefault(); return; } // long-press is handled below
+    const target = e.target.closest('[data-note], [data-ctx]');
+    if (target) { e.preventDefault(); return menuFor(target, e.clientX, e.clientY); }
+    if (e.target.closest('#content') && route.type === 'folder' && route.folder === 'notes') {
+      e.preventDefault();
+      const cid = route.course, fid = route.sub || '';
+      showMenu([{ label: 'New folder', run: () => { setSide(true); newFolder(cid, fid); } }], e.clientX, e.clientY);
+    }
+  });
+  window.addEventListener('keydown', (e) => { if (e.key === 'Escape') ctx.hidden = true; });
+
+  // ---------- press, long-press and drag (pointer events: works for touch, Apple Pencil and mouse)
+  // Touch/pen: hold ~0.35 s to lift. Release without moving opens the menu; move while lifted drags.
+  // A finger that moves before the lift is a scroll, so scrolling the grid still works.
+  // Mouse: drag starts after a few pixels; right-click opens the menu.
+  let press = null;
+  const LIFT_MS = 350;
+  document.addEventListener('pointerdown', (e) => {
+    suppressClickOn = null;
+    if (e.button !== 0 || e.target.closest('input, [data-toggle], .row-add, #ctx')) return;
+    const el = e.target.closest('[data-note], [data-ctx]');
+    if (!el) return;
+    press = { el, x: e.clientX, y: e.clientY, id: e.pointerId, touch: e.pointerType !== 'mouse', lifted: false, dragging: false };
+    if (press.touch) press.timer = setTimeout(() => { if (!press) return; press.lifted = true; el.classList.add('lifted'); navigator.vibrate?.(8); }, LIFT_MS);
+  });
+  document.addEventListener('pointermove', (e) => {
+    if (!press || e.pointerId !== press.id) return;
+    const dist = Math.hypot(e.clientX - press.x, e.clientY - press.y);
+    if (!press.dragging) {
+      if (press.touch && !press.lifted) { if (dist > 8) endPress(); return; }
+      if (!press.el.dataset.note || dist < 6) return;
+      startDrag(e);
+    }
+    moveDrag(e);
+  });
+  document.addEventListener('pointerup', (e) => {
+    if (!press || e.pointerId !== press.id) return;
+    if (press.dragging) { suppressClickOn = press.el; finishDrag(e); }
+    else if (press.lifted) { suppressClickOn = press.el; menuFor(press.el, e.clientX, e.clientY); }
+    endPress();
+  });
+  document.addEventListener('pointercancel', () => { if (press?.dragging) cancelDrag(); endPress(); });
+  // Once a note is lifted, the finger drags it instead of scrolling the page.
+  document.addEventListener('touchmove', (e) => { if (press && (press.lifted || press.dragging)) e.preventDefault(); }, { passive: false });
+
+  function endPress() {
+    if (!press) return;
+    clearTimeout(press.timer);
+    press.el.classList.remove('lifted');
+    press = null;
+  }
+  function startDrag(e) {
+    press.dragging = true;
+    const r = press.el.getBoundingClientRect();
+    const g = press.el.cloneNode(true);
+    g.classList.add('ghost');
+    g.classList.remove('lifted');
+    g.style.width = r.width + 'px';
+    document.body.append(g);
+    press.ghost = g;
+    press.el.classList.add('dragging');
+    dragNote = { id: press.el.dataset.note, course: findDoc(press.el.dataset.note).c.id };
+    ctx.hidden = true;
+  }
+  function dropTargetAt(x, y) {
+    const el = document.elementFromPoint(x, y)?.closest('[data-drop]');
+    if (!el) return null;
+    const [cid, fid] = el.dataset.drop.split('|');
+    if (cid !== dragNote.course) return { el, ok: false, reason: 'course' }; // notes stay in their course
+    if ((folderOf(dragNote.id) || '') === fid) return { el, ok: false, reason: 'same' };
+    return { el, ok: true, cid, fid };
+  }
+  function moveDrag(e) {
+    press.ghost.style.left = e.clientX - 20 + 'px';
+    press.ghost.style.top = e.clientY - 20 + 'px';
+    clearDrop();
+    const t = dropTargetAt(e.clientX, e.clientY);
+    if (t) t.el.classList.add(t.ok ? 'drop' : 'no-drop');
+  }
+  function finishDrag(e) {
+    const t = dropTargetAt(e.clientX, e.clientY);
+    const id = dragNote.id;
+    cancelDrag();
+    if (!t) return;
+    if (!t.ok) { if (t.reason === 'course') toast('Notes stay in their own course.'); return; }
+    moveNote(id, t.cid, t.fid || null);
+  }
+  function cancelDrag() {
+    press?.ghost?.remove();
+    press?.el.classList.remove('dragging');
+    dragNote = null;
+    clearDrop();
+  }
+
+  // ---------- PDFs dropped from the desktop or the iPad Files app (Split View)
+  const isFiles = (e) => Array.from(e.dataTransfer?.types || []).includes('Files');
+  const fileTarget = (e) => {
+    const t = e.target.closest?.('[data-drop]');
+    if (t) { const [cid, fid] = t.dataset.drop.split('|'); return { el: t, cid, where: 'notes', fid }; }
+    const l = e.target.closest?.('[data-lectures]');
+    if (l) return { el: l, cid: l.dataset.lectures, where: 'lectures' };
+    const cr = e.target.closest?.('.course-row');
+    if (cr) return { el: cr, cid: cr.dataset.nav, where: 'lectures' };
+    if (route.type === 'folder') return { el: document.getElementById('content'), cid: route.course, where: route.folder, fid: route.sub || '' };
+    if (route.type === 'course') return { el: document.getElementById('content'), cid: route.course, where: 'lectures' };
+    const d = findDoc(route.doc);
+    return { el: document.getElementById('content'), cid: d.c.id, where: d.kind === 'slides' ? 'lectures' : 'notes', fid: d.kind === 'note' ? folderOf(d.n.id) || '' : '' };
+  };
+  const placeName = (t) => `${course(t.cid).code} / ${t.where === 'lectures' ? 'Lectures' : t.fid ? 'My notes / ' + folderById(t.fid).name : 'My notes'}`;
+  document.addEventListener('dragover', (e) => {
+    if (!isFiles(e)) return;
+    e.preventDefault();
+    clearDrop();
+    const t = fileTarget(e);
+    t.el.classList.add('drop');
+    dropText.innerHTML = `Drop PDF into ${esc(placeName(t))}<small>${t.where === 'lectures' ? 'Becomes a lecture slide deck' : 'Becomes a note you can write on'}</small>`;
+    hint.hidden = false;
+  });
+  document.addEventListener('dragleave', (e) => { if (!e.relatedTarget) clearDrop(); });
+  document.addEventListener('drop', (e) => {
+    if (!isFiles(e)) return;
+    e.preventDefault();
+    const t = fileTarget(e);
+    clearDrop();
+    const pdfs = Array.from(e.dataTransfer.files).filter((f) => f.type === 'application/pdf' || /\.pdf$/i.test(f.name));
+    if (!pdfs.length) return toast('Only PDF files can be added.');
+    toast(`Added ${pdfs[0].name}${pdfs.length > 1 ? ` and ${pdfs.length - 1} more` : ''} to ${placeName(t)} (prototype: not saved)`);
+  });
+
+  window.addEventListener('hashchange', render);
+  render();
+</script>
+</body>
+</html>

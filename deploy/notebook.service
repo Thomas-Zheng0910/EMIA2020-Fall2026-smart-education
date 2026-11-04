@@ -1,0 +1,18 @@
+[Unit]
+Description=Notebook — collaborative course notebook
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/chzheng/collaborative-course-notebook
+ExecStart=/home/chzheng/.local/share/classflow-toolchain/node-v24.12.0-linux-arm64/bin/node --env-file-if-exists=.env --import tsx server/index.ts
+Environment=PORT=4310
+Environment=DATA_DIR=/home/chzheng/collaborative-course-notebook/data
+Environment=ALLOWED_ORIGINS=https://notebook.zh-thomas.party
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target
