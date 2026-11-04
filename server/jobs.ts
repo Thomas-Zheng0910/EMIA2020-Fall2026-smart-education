@@ -134,7 +134,11 @@ export class Jobs {
   resume() {
     if (!this.opts.background) return;
     for (const course of this.store.courses())
-      for (const l of this.store.lectures(course.id)) if (l.status === 'digesting' || (l.status === 'ready' && l.digested < l.pageCount)) this.digestLecture(l.id);
+      for (const l of this.store.lectures(course.id)) {
+        if (l.status === 'digesting' || (l.status === 'ready' && l.digested < l.pageCount)) this.digestLecture(l.id);
+        // Lectures digested before topics existed get them once, on the next start.
+        else if (l.status === 'ready' && l.digested >= l.pageCount) this.topicsForLecture(l.id);
+      }
     for (const pid of this.store.queuedPages()) this.scheduleIndex(pid, 0);
     // Notes left dirty by a client that never closed cleanly must not be stranded.
     this.startSweep();
