@@ -11,7 +11,7 @@
     "node": ">=24.0.0"
   },
   "scripts": {
-    "dev": "concurrently -k -n api,web \"tsx --env-file-if-exists=.env server/index.ts\" \"vite --host 127.0.0.1\"",
+    "dev": "concurrently -k -n api,web \"tsx watch --env-file-if-exists=.env server/index.ts\" \"vite --host 127.0.0.1\"",
     "build": "tsc --noEmit && vite build",
     "start": "tsx --env-file-if-exists=.env server/index.ts",
     "test": "vitest run",

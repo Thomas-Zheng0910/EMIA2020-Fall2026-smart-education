@@ -17,4 +17,4 @@ A bounded, local prototype of a Goodnotes-like course notebook with peer knowled
 - Quiz answers must be supported by an official slide; questions without a valid slide citation are dropped. Classmate notes are labeled unverified everywhere.
 - Missing AI configuration must produce a clear error, never fabricated content.
 - Mock-provider tests establish transport and control flow only; model quality needs representative inputs and human evaluation.
-- `npm run dev` uses polling for the frontend because this workstation has exhausted native file-watch handles. Restart it after server changes.
+- `npm run dev` watches both halves: Vite (polling, left on because native watch handles ran out on this workstation once) and the API via `tsx watch`. Server edits restart the API on their own; if a restart ever fails to pick something up, check `/tmp/opencode/dev-server.log` and restart. Background jobs resume after a restart, which is safe to do mid-index.
