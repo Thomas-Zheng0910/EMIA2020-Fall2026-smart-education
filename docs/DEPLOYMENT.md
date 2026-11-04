@@ -7,7 +7,7 @@ Configured November 1, 2026 at the user's request for public access from a Mac o
 - Hostname: `notebook.zh-thomas.party`.
 - DNS: proxied CNAME to the existing `spark` Cloudflare tunnel, created with `cloudflared tunnel route dns`.
 - Tunnel ingress: `https://notebook.zh-thomas.party` → `http://127.0.0.1:4310`.
-- App: user service `notebook.service`; its source template is `deploy/notebook.service`. Install the template as `~/.config/systemd/user/notebook.service` before using the service commands below. The older v1 unit is inactive and can be disabled.
+- App: user service `notebook.service`, now installed and enabled (`systemctl --user enable --now notebook.service`); its source template is `deploy/notebook.service`. It runs `npm run serve`, which watches both halves: `tsx watch` restarts the API on server edits and `vite build --watch` rebuilds `dist/` on frontend edits. **An edit in this working copy reaches the public site by itself — no rebuild, no restart, no `npm run check` needed before it appears.** The older v1 unit is inactive and can be disabled.
 - Tunnel: existing `cloudflared.service`, restarted after validating the updated ingress configuration.
 - Origin: loopback only; no LAN ports or firewall changes were required.
 - Browser writes: the app explicitly allows `https://notebook.zh-thomas.party` through `ALLOWED_ORIGINS`; unrelated public origins remain rejected.
@@ -42,9 +42,16 @@ After updating code or `.env`:
 
 ```bash
 cd /home/chzheng/collaborative-course-notebook
-npm run check
+npm run check          # tests + build; optional, the service is already serving
+```
+
+No restart is needed: the service watches and rebuilds. Restart only if `.env` changed, since `tsx watch` does not reload it:
+
+```bash
 systemctl --user restart notebook.service
 ```
+
+The public site is a demo, so it tracks this working copy on purpose. Reviewers see every change without a deploy step, which also means an unreviewed edit is public immediately — keep the branch safe to show.
 
 After editing tunnel ingress, validate before restarting:
 

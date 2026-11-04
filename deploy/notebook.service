@@ -1,17 +1,23 @@
 [Unit]
-Description=Notebook — collaborative course notebook
+Description=Notebook — collaborative course notebook (public demo)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
 WorkingDirectory=/home/chzheng/collaborative-course-notebook
-ExecStart=/home/chzheng/.local/share/classflow-toolchain/node-v24.12.0-linux-arm64/bin/node --env-file-if-exists=.env --import tsx server/index.ts
+Environment=PATH=/home/chzheng/.local/share/classflow-toolchain/node-v24.12.0-linux-arm64/bin:/usr/local/bin:/usr/bin:/bin
 Environment=PORT=4310
 Environment=DATA_DIR=/home/chzheng/collaborative-course-notebook/data
 Environment=ALLOWED_ORIGINS=https://notebook.zh-thomas.party
+# `serve` keeps the public site current on its own: server edits restart the API
+# (tsx watch) and frontend edits rebuild dist/ (vite build --watch). Nobody has to
+# remember a manual restart, so the public demo never lags the working copy.
+ExecStart=/home/chzheng/.local/share/classflow-toolchain/node-v24.12.0-linux-arm64/bin/npm run serve
 Restart=on-failure
 RestartSec=3
+KillMode=mixed
+TimeoutStopSec=20
 NoNewPrivileges=true
 
 [Install]

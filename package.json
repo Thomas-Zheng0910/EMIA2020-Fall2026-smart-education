@@ -12,7 +12,9 @@
   },
   "scripts": {
     "dev": "concurrently -k -n api,web \"tsx watch --env-file-if-exists=.env server/index.ts\" \"vite --host 127.0.0.1\"",
+    "dev:local": "PORT=4312 API_PORT=4312 WEB_PORT=5174 npm run dev",
     "build": "tsc --noEmit && vite build",
+    "serve": "node scripts/serve.mjs",
     "start": "tsx --env-file-if-exists=.env server/index.ts",
     "test": "vitest run",
     "test:e2e": "playwright test",
