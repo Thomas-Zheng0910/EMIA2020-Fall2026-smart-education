@@ -7,7 +7,7 @@ The latest pass (4 Nov) implemented the **knowledge base and inline suggestions*
 
 - Run: `npm run dev` → http://127.0.0.1:5173. Both halves watch: Vite rebuilds the client, `tsx watch` restarts the API. Use `npm run dev:local` (4312/5174) when the public service already holds 4310.
 - Public host: https://notebook.zh-thomas.party → `:4310`, served by `notebook.service` running `npm run serve` (watch + rebuild). **An edit here is live on the public page within seconds — no build, no restart.** Restart the service only after editing `.env`, which `tsx watch` does not reload.
-- Verify: `npm run check` (22 unit/API tests + typecheck + build) and `npm run test:e2e` (9 browser scenarios, mock model). Both pass as of this handoff. The e2e run uses `:4311`/`:5174`/`:4399`, so it runs alongside the service.
+- Verify: `npm run check` (22 unit/API tests + typecheck + build) and `npm run test:e2e` (10 browser scenarios, mock model). Both pass as of this handoff. The e2e run uses `:4311`/`:5174`/`:4399`, so it runs alongside the service.
 - Live smoke (costs API calls): `node scripts/live-smoke.mjs` against the running server.
 
 ## Read first

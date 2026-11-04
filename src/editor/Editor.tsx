@@ -39,10 +39,12 @@ export function Editor({ notebookId, onBack, onToast }: { notebookId: string; on
       return v;
     });
   /**
-   * The suggestion card open at a gap. The card itself is held, not its id: a suggestions
-   * refresh (a re-read after writing) must not blink an open card out from under the student.
+   * The suggestion card open at a gap: its id plus the version that was showing when it opened.
+   * The id keeps the card alive across a refresh, and the snapshot keeps it on screen if the gap
+   * disappears; otherwise the card follows the refreshed data, so a gap that just gained a
+   * classmate's note shows that note instead of a stale "From slide 12".
    */
-  const [openGap, setOpenGap] = useState<Suggestion | null>(null);
+  const [openGap, setOpenGap] = useState<{ id: string; snapshot: Suggestion } | null>(null);
   const [lasso, setLasso] = useState<{ pageId: string; bbox: [number, number, number, number] } | null>(null);
   const [source, setSource] = useState<Citation | null>(null);
   const [saveState, setSaveState] = useState<Record<string, SaveState>>({});
@@ -267,6 +269,8 @@ export function Editor({ notebookId, onBack, onToast }: { notebookId: string; on
   const currentPage = pages.find((p) => p.id === current) ?? null;
   // One suggestion request per page version: the markers, the panel and the inline card share it.
   const suggestions = useSuggestions(currentPage, onToast);
+  /** Notes of this page the AI judged wrong — shown only to their author, with the explanation. */
+  const disputed = (suggestions.data?.own ?? []).filter((o) => o.state === 'disputed');
   useEffect(() => {
     if (current) lastPage.set(notebookId, current);
   }, [current, notebookId]);
@@ -511,8 +515,22 @@ export function Editor({ notebookId, onBack, onToast }: { notebookId: string; on
               />
               <div className="page-with-margin">
                 {/* Quiet by default: a small marker beside each gap, nothing else until it is tapped. */}
+                {/* The author's own marker: a note the AI judged wrong, with the reason on the card. */}
+                {p.id === current && disputed.length > 0 && (
+                  <div className="margin-markers" style={{ height: p.height * scale }}>
+                    <button
+                      className="gap-marker disputed"
+                      style={{ top: 12 * scale }}
+                      onClick={() => (goto(p.id), setPanel({ open: true }), onToast(disputed[0]!.disputeExplanation ?? 'One of your notes is being checked.'))}
+                      title={disputed[0]!.disputeExplanation ?? 'One of your notes is being checked'}
+                      aria-label="A note on this page is being checked"
+                    >
+                      <span />
+                    </button>
+                  </div>
+                )}
                 {p.id === current && suggestions.gaps.length > 0 && (
-                  <MarginMarkers page={p} scale={scale} gaps={suggestions.gaps} onOpen={(g) => (goto(p.id), setOpenGap(g))} />
+                  <MarginMarkers page={p} scale={scale} gaps={suggestions.gaps} onOpen={(g) => (goto(p.id), setOpenGap({ id: g.id, snapshot: g }))} />
                 )}
                 <LazyPage height={p.height * scale} root={scroller}>
                   <PageView
@@ -529,21 +547,24 @@ export function Editor({ notebookId, onBack, onToast }: { notebookId: string; on
                   />
                 </LazyPage>
                 {openGap && p.id === current && (
-                  <div className="gap-card" style={{ top: Math.max(0, openGap.bbox[1] * p.height) * scale }}>
+                  <div
+                    className="gap-card"
+                    style={{ top: Math.max(0, (suggestions.gaps.find((g) => g.id === openGap.id) ?? openGap.snapshot).bbox[1] * p.height) * scale }}
+                  >
                     <SuggestionCard
                       key={openGap.id}
-                      suggestion={openGap}
-                      onAdd={() => {
-                        addAnnotation(p.id, { title: openGap.title || openGap.missing, body: openGap.body, source: openGap.source, citations: openGap.citations }, openGap.bbox);
+                      suggestion={suggestions.gaps.find((g) => g.id === openGap.id) ?? openGap.snapshot}
+                      onAdd={(s) => {
+                        addAnnotation(p.id, { title: s.title || s.missing, body: s.body, source: s.source, citations: s.citations }, s.bbox);
                         setOpenGap(null);
                       }}
-                      onDismiss={() => {
-                        suggestions.dismiss(openGap);
+                      onDismiss={(s) => {
+                        suggestions.dismiss(s);
                         setOpenGap(null);
                       }}
                       onCitation={setSource}
-                      onReport={() => {
-                        reportSuggestion(openGap);
+                      onReport={(s) => {
+                        reportSuggestion(s);
                         setOpenGap(null);
                       }}
                       onClose={() => setOpenGap(null)}
@@ -580,7 +601,7 @@ export function Editor({ notebookId, onBack, onToast }: { notebookId: string; on
             unlinked={suggestions.data?.unlinked ?? false}
             onClose={() => setPanel((p) => ({ ...p, open: false }))}
             onScrollTo={(g) => {
-              setOpenGap(g);
+              setOpenGap({ id: g.id, snapshot: g });
               goto(currentPage.id);
             }}
             onAdd={addAnnotation}

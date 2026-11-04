@@ -86,10 +86,10 @@ export function SuggestionCard({
   onClose,
 }: {
   suggestion: Suggestion;
-  onAdd: () => void;
-  onDismiss: () => void;
+  onAdd: (s: Suggestion) => void;
+  onDismiss: (s: Suggestion) => void;
   onCitation: (c: Citation) => void;
-  onReport: () => void;
+  onReport: (s: Suggestion) => void;
   onClose: () => void;
 }) {
   const [filling, setFilling] = useState(false);
@@ -133,12 +133,12 @@ export function SuggestionCard({
           disabled={added || !body}
           onClick={() => {
             setAdded(true);
-            onAdd();
+            onAdd(suggestion);
           }}
         >
           {added ? 'Added ✓' : 'Add to my notes'}
         </button>
-        <button className="btn small ghost" onClick={onDismiss}>
+        <button className="btn small ghost" onClick={() => onDismiss(suggestion)}>
           Dismiss
         </button>
         <div className="suggest-more">
@@ -147,14 +147,14 @@ export function SuggestionCard({
           </button>
           {menu && (
             <div className="suggest-menu" role="menu">
-              <button role="menuitem" onClick={onDismiss}>
+              <button role="menuitem" onClick={() => onDismiss(suggestion)}>
                 Not helpful
               </button>
               <button
                 role="menuitem"
                 onClick={() => {
-                  onReport();
-                  onDismiss();
+                  onReport(suggestion);
+                  onDismiss(suggestion);
                 }}
               >
                 Looks wrong

@@ -346,4 +346,34 @@ test.describe.serial('notebook workflow', () => {
     await page.getByRole('button', { name: 'Close panel' }).click();
     await expect(page.locator('.panel')).toHaveCount(0);
   });
+  test('a note judged wrong is hidden from classmates and explained to its author', async ({ page, request }) => {
+    await as(page, 'thomas');
+    await openLecture(page);
+    await draw(page, 1);
+    await expect(page.locator('.save-state')).toHaveText('Saved');
+    // Leaving the notebook is what merges its notes for classmates.
+    await page.getByRole('button', { name: 'Back to course' }).click();
+    await expect.poll(async () => (await request.get('/api/notebooks?course=1')).status(), { timeout: 30000 }).toBeLessThan(500);
+    // A classmate finds the suggestion on the same slide and says it looks wrong.
+    await as(page, 'priya');
+    await openLecture(page);
+    await draw(page, 1);
+    await expect(page.locator('.save-state')).toHaveText('Saved');
+    await expect.poll(async () => page.locator('.gap-marker').count(), { timeout: 60000 }).toBeGreaterThan(0);
+    await page.locator('.gap-marker').first().click();
+    const card = page.locator('.suggest-card').first();
+    // Wait for the card to be the classmate's note, not the slide fallback: only a peer card
+    // carries an entry, and only an entry can be reported.
+    await expect(card.locator('.suggest-src')).toContainText(/From \d+ classmates?' notes?/, { timeout: 60000 });
+    await card.getByRole('button', { name: 'More actions' }).click();
+    await page.locator('.suggest-menu').getByRole('menuitem', { name: 'Looks wrong' }).click();
+    // The author sees an amber marker and, in the panel, the reason — nobody else sees a flag.
+    await as(page, 'thomas');
+    await openLecture(page);
+    await expect.poll(async () => page.locator('.gap-marker.disputed').count(), { timeout: 60000 }).toBe(1);
+    await page.locator('.gap-marker.disputed').click();
+    await expect(page.locator('.panel')).toBeVisible();
+    await expect(page.locator('.mine-item.disputed')).toContainText('contradicts the slide');
+  });
+
 });

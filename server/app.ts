@@ -468,6 +468,18 @@ export async function buildApp({
     jobs.recheckEntry(entryId);
     return { ok: true };
   });
+  /** Rechecks one entry on demand: the author after fixing a note, or a stuck dispute. */
+  app.post('/api/entries/:id/recheck', async (req) => {
+    const entryId = (req.params as { id: string }).id;
+    const entry = store.entry(entryId);
+    if (!entry) throw new AppError(404, 'That suggestion no longer exists.');
+    if (!store.isEnrolled(who(req), entry.courseId)) throw new AppError(403, 'Join the course to check its notes.');
+    const f = store.entrySources(entryId).find((x) => x.studentId === who(req));
+    // Only the author can ask for their own note to be checked again.
+    if (!f) throw new AppError(403, 'This note belongs to another student.');
+    jobs.recheckEntry(entryId);
+    return { ok: true };
+  });
   /** Marks a notebook as left: its slides' notes are merged and checked for classmates. */
   app.post('/api/notebooks/:id/close', async (req) => {
     const nb = ownNotebook(req, (req.params as { id: string }).id);

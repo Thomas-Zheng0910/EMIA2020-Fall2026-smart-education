@@ -3011,3 +3011,8 @@ body.note-dragging * {
 .mine-item.shared .tag {
   color: var(--muted);
 }
+/* The author's own marker: amber, only ever on a page whose note is being checked. */
+.gap-marker.disputed > span {
+  background: #e8890c;
+  box-shadow: 0 0 0 3px rgba(232, 137, 12, 0.18);
+}
