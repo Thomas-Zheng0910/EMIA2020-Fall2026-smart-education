@@ -68,6 +68,29 @@ CREATE INDEX IF NOT EXISTS folders_owner ON folders(studentId, courseId);
 -- The ids are what make the folders ordinary: renaming or moving them keeps lecture decks filed.
 CREATE TABLE IF NOT EXISTS course_seeds(studentId TEXT, courseId TEXT REFERENCES courses(id) ON DELETE CASCADE,
   lecturesId TEXT, quizzesId TEXT, seededAt TEXT, PRIMARY KEY(studentId, courseId));
+-- The course knowledge base: one row per point of knowledge on a slide, fed by the fragments
+-- that make it. Summaries are written by the merge job; the sources stay internal.
+CREATE TABLE IF NOT EXISTS knowledge_entries(id TEXT PRIMARY KEY, courseId TEXT REFERENCES courses(id) ON DELETE CASCADE,
+  lectureId TEXT REFERENCES lectures(id) ON DELETE CASCADE, slideId TEXT REFERENCES slides(id) ON DELETE CASCADE,
+  title TEXT, summary TEXT, createdAt TEXT, updatedAt TEXT, checkedAt TEXT,
+  excludedReason TEXT, disputeExplanation TEXT, sourceHash TEXT);
+CREATE INDEX IF NOT EXISTS entry_slide ON knowledge_entries(slideId);
+CREATE TABLE IF NOT EXISTS entry_sources(entryId TEXT REFERENCES knowledge_entries(id) ON DELETE CASCADE,
+  fragmentId TEXT REFERENCES fragments(id) ON DELETE CASCADE, PRIMARY KEY(entryId, fragmentId));
+CREATE TABLE IF NOT EXISTS lecture_topics(id TEXT PRIMARY KEY, courseId TEXT REFERENCES courses(id) ON DELETE CASCADE,
+  lectureId TEXT REFERENCES lectures(id) ON DELETE CASCADE, name TEXT, slideIds TEXT);
+CREATE INDEX IF NOT EXISTS topic_lecture ON lecture_topics(lectureId);
+-- A place in a student's notes where something is missing, found by the page-indexing call.
+CREATE TABLE IF NOT EXISTS page_gaps(id TEXT PRIMARY KEY, pageId TEXT REFERENCES pages(id) ON DELETE CASCADE,
+  pageRevision INTEGER, bbox TEXT, missing TEXT, entryIds TEXT, createdAt TEXT);
+CREATE INDEX IF NOT EXISTS gaps_page ON page_gaps(pageId);
+CREATE TABLE IF NOT EXISTS gap_dismissals(studentId TEXT, gapId TEXT, PRIMARY KEY(studentId, gapId));
+CREATE TABLE IF NOT EXISTS entry_reports(entryId TEXT, studentId TEXT, reason TEXT, createdAt TEXT, PRIMARY KEY(entryId, studentId));
+-- What a slide's notes looked like when the merge job last ran, so unchanged slides cost nothing.
+CREATE TABLE IF NOT EXISTS slide_merges(slideId TEXT PRIMARY KEY, sourceHash TEXT, mergedAt TEXT);
+-- What a page's slide looked like when its gaps were last checked, so opening a page re-reads it
+-- only when a classmate's note actually changed the knowledge behind those gaps.
+CREATE TABLE IF NOT EXISTS gap_checks(pageId TEXT PRIMARY KEY, entryHash TEXT, checkedAt TEXT);
 `;
 
 export class Store {
@@ -77,7 +100,13 @@ export class Store {
     this.db = new DatabaseSync(file);
     this.db.exec(SCHEMA);
     // Additive migrations for databases created before these columns existed.
-    for (const sql of [`ALTER TABLE fragments ADD COLUMN reason TEXT`, `ALTER TABLE notebooks ADD COLUMN folderId TEXT`])
+    for (const sql of [
+      `ALTER TABLE fragments ADD COLUMN reason TEXT`,
+      `ALTER TABLE notebooks ADD COLUMN folderId TEXT`,
+      `ALTER TABLE fragments ADD COLUMN entryId TEXT`,
+      `ALTER TABLE fragments ADD COLUMN supersededBy TEXT`,
+      `CREATE INDEX IF NOT EXISTS fragments_entry ON fragments(entryId)`,
+    ])
       try {
         this.db.exec(sql);
       } catch {
@@ -544,16 +573,23 @@ export class Store {
     pid: string,
     revision: number,
     contentHash: string,
-    frags: Omit<Fragment, 'id' | 'pageId' | 'authorName' | 'authorColor' | 'createdAt'>[],
+    frags: Omit<Fragment, 'id' | 'pageId' | 'authorName' | 'authorColor' | 'createdAt' | 'entryId'>[],
   ) {
     this.tx(() => {
       const cur = this.get('SELECT revision FROM pages WHERE id=?', pid);
       if (!cur || cur.revision !== revision) return; // a newer edit supersedes this result
       // Re-reads keep the id of a fragment whose text did not change, so classmates' dismissals survive.
       const previous = new Map<string, string[]>();
-      for (const row of this.all('SELECT id,text FROM fragments WHERE pageId=?', pid))
+      for (const row of this.all('SELECT * FROM fragments WHERE pageId=? AND supersededBy IS NULL', pid))
         previous.set(row.text as string, [...(previous.get(row.text as string) ?? []), row.id as string]);
-      this.run('DELETE FROM fragments WHERE pageId=?', pid);
+      // Notes this read no longer produces are superseded, not destroyed: a citation already in a
+      // classmate's notes must still open. They keep their row, stop being shared, and the new note
+      // in the same position is recorded as their replacement.
+      const live = this.all('SELECT * FROM fragments WHERE pageId=? AND supersededBy IS NULL', pid);
+      const stale = live.filter((r) => !frags.some((f) => f.text === r.text));
+      // Only the two most recent generations are kept: enough for a citation to resolve, not a history.
+      this.run('DELETE FROM fragments WHERE pageId=? AND supersededBy IS NOT NULL', pid);
+      this.run('DELETE FROM fragments WHERE pageId=? AND supersededBy IS NULL', pid);
       const withheld = new Set(this.all('SELECT textHash FROM withheld WHERE pageId=?', pid).map((r) => r.textHash as string));
       for (const f of frags) {
         // An item the author stopped sharing stays private when the page is read again.
@@ -576,6 +612,32 @@ export class Store {
           now(),
           reason,
         );
+      }
+      if (stale.length) {
+        const fresh = this.all('SELECT id, rowid FROM fragments WHERE pageId=? ORDER BY rowid', pid);
+        stale.forEach((row, i) => {
+          // The note at the same position is this one's replacement; otherwise the first new note.
+          const replacement = (fresh[i] ?? fresh[0])?.id as string | undefined;
+          if (!replacement) return;
+          this.run(
+            'INSERT INTO fragments(id,pageId,studentId,courseId,lectureId,slideId,kind,text,topic,confidence,bbox,shared,pageRevision,createdAt,reason,supersededBy) VALUES(?,?,?,?,?,?,?,?,?,?,?,0,?,?,?,?)',
+            row.id,
+            pid,
+            row.studentId,
+            row.courseId,
+            row.lectureId,
+            row.slideId,
+            row.kind,
+            row.text,
+            row.topic,
+            row.confidence,
+            row.bbox,
+            row.pageRevision,
+            row.createdAt,
+            row.reason ?? null,
+            replacement,
+          );
+        });
       }
       this.run(
         `UPDATE pages SET indexStatus='indexed', indexError=NULL, indexedRevision=?, contentHash=? WHERE id=?`,
@@ -601,6 +663,7 @@ export class Store {
     bbox: JSON.parse(r.bbox),
     shared: Boolean(r.shared),
     reason: r.reason ?? null,
+    entryId: (r.entryId ?? null) as string | null,
     createdAt: r.createdAt,
     pageRevision: r.pageRevision,
   });
@@ -660,6 +723,217 @@ export class Store {
   }
   dismiss(studentId: string, fragmentId: string) {
     this.run('INSERT OR IGNORE INTO dismissals VALUES(?,?)', studentId, fragmentId);
+  }
+
+  // ---------- the course knowledge base
+  /** Fragments on a slide that classmates may see: shared and not superseded. */
+  slideFragments(slideId: string) {
+    return this.all(
+      `${this.FRAG_SQL} WHERE f.slideId=? AND f.shared=1 AND f.supersededBy IS NULL ORDER BY f.confidence DESC`,
+      slideId,
+    ).map(this.fragRow);
+  }
+  /** Entries for a slide, disputed ones included (callers decide whether to hide them). */
+  entries(slideId: string) {
+    return this.all('SELECT * FROM knowledge_entries WHERE slideId=? ORDER BY createdAt', slideId).map(this.entryRow);
+  }
+  entry(entryId: string) {
+    const r = this.get('SELECT * FROM knowledge_entries WHERE id=?', entryId);
+    return r ? this.entryRow(r) : null;
+  }
+  private entryRow = (r: Row) => ({
+    id: r.id as string,
+    courseId: r.courseId as string,
+    lectureId: r.lectureId as string,
+    slideId: r.slideId as string,
+    title: r.title as string,
+    summary: r.summary as string,
+    createdAt: r.createdAt as string,
+    updatedAt: r.updatedAt as string,
+    checkedAt: (r.checkedAt ?? null) as string | null,
+    excludedReason: (r.excludedReason ?? null) as string | null,
+    disputeExplanation: (r.disputeExplanation ?? null) as string | null,
+  });
+  /** The fragments feeding an entry, oldest first. */
+  entrySources(entryId: string) {
+    return this.all(
+      `${this.FRAG_SQL} JOIN entry_sources es ON es.fragmentId=f.id WHERE es.entryId=? ORDER BY f.rowid`,
+      entryId,
+    ).map(this.fragRow);
+  }
+  entrySourceCount(entryId: string) {
+    return (this.get('SELECT COUNT(*) n FROM entry_sources WHERE entryId=?', entryId)?.n ?? 0) as number;
+  }
+  upsertEntry(e: {
+    id?: string | null;
+    courseId: string;
+    lectureId: string;
+    slideId: string;
+    title: string;
+    summary: string;
+    excludedReason?: string | null;
+    disputeExplanation?: string | null;
+  }) {
+    const existing = e.id ? this.get('SELECT id FROM knowledge_entries WHERE id=?', e.id) : undefined;
+    if (existing) {
+      // Keep the id so nothing flickers for anyone already looking at this slide.
+      this.run(
+        'UPDATE knowledge_entries SET title=?, summary=?, updatedAt=?, excludedReason=?, disputeExplanation=? WHERE id=?',
+        e.title,
+        e.summary,
+        now(),
+        e.excludedReason ?? null,
+        e.disputeExplanation ?? null,
+        e.id,
+      );
+      return e.id!;
+    }
+    const eid = id();
+    this.run(
+      'INSERT INTO knowledge_entries(id,courseId,lectureId,slideId,title,summary,createdAt,updatedAt,checkedAt,excludedReason,disputeExplanation) VALUES(?,?,?,?,?,?,?,?,?,?,?)',
+      eid,
+      e.courseId,
+      e.lectureId,
+      e.slideId,
+      e.title,
+      e.summary,
+      now(),
+      now(),
+      null,
+      e.excludedReason ?? null,
+      e.disputeExplanation ?? null,
+    );
+    return eid;
+  }
+  /** Point an entry at exactly these fragments; also stamps the fragments with their entry. */
+  setEntrySources(entryId: string, fragmentIds: string[]) {
+    this.run('DELETE FROM entry_sources WHERE entryId=?', entryId);
+    for (const fid of fragmentIds) {
+      this.run('INSERT OR IGNORE INTO entry_sources VALUES(?,?)', entryId, fid);
+      this.run('UPDATE fragments SET entryId=? WHERE id=?', entryId, fid);
+    }
+  }
+  deleteEntry(entryId: string) {
+    this.run('UPDATE fragments SET entryId=NULL WHERE entryId=?', entryId);
+    this.run('DELETE FROM knowledge_entries WHERE id=?', entryId);
+  }
+  /** An entry judged wrong by a report: out of suggestions and prompts until rechecked. */
+  setEntryDispute(entryId: string, disputed: boolean, explanation: string | null) {
+    this.run(
+      'UPDATE knowledge_entries SET excludedReason=?, disputeExplanation=?, checkedAt=? WHERE id=?',
+      disputed ? 'disputed' : null,
+      disputed ? explanation : null,
+      now(),
+      entryId,
+    );
+  }
+  reportEntry(entryId: string, studentId: string, reason: string) {
+    this.run('INSERT OR REPLACE INTO entry_reports VALUES(?,?,?,?)', entryId, studentId, reason, now());
+  }
+  hasReported(entryId: string, studentId: string) {
+    return Boolean(this.get('SELECT 1 FROM entry_reports WHERE entryId=? AND studentId=?', entryId, studentId));
+  }
+  /** Slides whose notes changed since their last merge, plus slides nobody has merged yet. */
+  dirtySlides() {
+    const rows = this.all(
+      `SELECT f.slideId slideId, GROUP_CONCAT(f.id || ':' || f.text, '|') src FROM fragments f
+       WHERE f.slideId IS NOT NULL AND f.shared=1 AND f.supersededBy IS NULL GROUP BY f.slideId`,
+    );
+    return rows
+      .map((r) => ({ slideId: r.slideId as string, sourceHash: hash(String(r.src ?? '')) }))
+      .filter((r) => this.slideMergeHash(r.slideId) !== r.sourceHash);
+  }
+  markSlideMerged(slideId: string, sourceHash: string) {
+    this.run('INSERT OR REPLACE INTO slide_merges VALUES(?,?,?)', slideId, sourceHash, now());
+  }
+  slideMergeHash(slideId: string) {
+    return (this.get('SELECT sourceHash FROM slide_merges WHERE slideId=?', slideId)?.sourceHash ?? null) as string | null;
+  }
+  /** A note the student wrote was replaced on re-indexing: the old fragment points at the new one. */
+  supersedeFragment(oldId: string, newId: string) {
+    this.run('UPDATE fragments SET supersededBy=?, shared=0 WHERE id=?', newId, oldId);
+  }
+  supersededBy(fragmentId: string) {
+    return (this.get('SELECT supersededBy FROM fragments WHERE id=?', fragmentId)?.supersededBy ?? null) as string | null;
+  }
+  topics(lectureId: string) {
+    return this.all('SELECT * FROM lecture_topics WHERE lectureId=? ORDER BY rowid', lectureId).map((r) => ({
+      id: r.id as string,
+      name: r.name as string,
+      slideIds: JSON.parse((r.slideIds as string) || '[]') as string[],
+    }));
+  }
+  hasTopics(lectureId: string) {
+    return Boolean(this.get('SELECT 1 FROM lecture_topics WHERE lectureId=?', lectureId));
+  }
+  setTopics(lectureId: string, courseId: string, topics: { name: string; slideIds: string[] }[]) {
+    this.tx(() => {
+      this.run('DELETE FROM lecture_topics WHERE lectureId=?', lectureId);
+      for (const t of topics) this.run('INSERT INTO lecture_topics VALUES(?,?,?,?,?)', id(), courseId, lectureId, t.name, JSON.stringify(t.slideIds));
+    });
+  }
+
+  // ---------- gaps in a page's notes
+  gaps(pageId: string) {
+    return this.all('SELECT * FROM page_gaps WHERE pageId=? ORDER BY rowid', pageId).map(this.gapRow);
+  }
+  private gapRow = (r: Row) => ({
+    id: r.id as string,
+    pageId: r.pageId as string,
+    pageRevision: r.pageRevision as number,
+    bbox: JSON.parse(r.bbox) as [number, number, number, number],
+    missing: r.missing as string,
+    entryIds: JSON.parse((r.entryIds as string) || '[]') as string[],
+    createdAt: r.createdAt as string,
+  });
+  /**
+   * Replaces a page's gaps, keeping the id of a gap that names the same thing. Ids must survive a
+   * re-read: an open card must not vanish under the student, and a dismissal is remembered by id.
+   */
+  replaceGaps(pageId: string, revision: number, gaps: { bbox: [number, number, number, number]; missing: string; entryIds: string[] }[]) {
+    this.tx(() => {
+      const same = (a: string, b: string) => a.trim().toLowerCase().replace(/\s+/g, ' ') === b.trim().toLowerCase().replace(/\s+/g, ' ');
+      const before = this.gaps(pageId);
+      const keep = new Map<string, string>();
+      for (const g of gaps) {
+        const match = before.find((old) => ![...keep.values()].includes(old.id) && same(old.missing, g.missing));
+        if (match) keep.set(g.missing, match.id);
+      }
+      this.run('DELETE FROM page_gaps WHERE pageId=?', pageId);
+      for (const g of gaps)
+        this.run(
+          'INSERT INTO page_gaps VALUES(?,?,?,?,?,?,?)',
+          keep.get(g.missing) ?? id(),
+          pageId,
+          revision,
+          JSON.stringify(g.bbox),
+          g.missing,
+          JSON.stringify(g.entryIds),
+          now(),
+        );
+    });
+  }
+  /** True when this page's slide has gained or changed entries since its gaps were last checked. */
+  gapsOutdated(pageId: string): boolean {
+    const page = this.get('SELECT p.slideId, p.linkSlideId FROM pages p WHERE p.id=?', pageId);
+    const slideId = (page?.slideId ?? page?.linkSlideId) as string | null;
+    if (!slideId) return false;
+    const stale = hash(this.all('SELECT id, updatedAt FROM knowledge_entries WHERE slideId=? ORDER BY id', slideId).map((r) => `${r.id}:${r.updatedAt}`).join('|'));
+    return (this.get('SELECT entryHash FROM gap_checks WHERE pageId=?', pageId)?.entryHash ?? null) !== stale;
+  }
+  markGapsChecked(pageId: string) {
+    const page = this.get('SELECT p.slideId, p.linkSlideId FROM pages p WHERE p.id=?', pageId);
+    const slideId = (page?.slideId ?? page?.linkSlideId) as string | null;
+    const entryHash = slideId
+      ? hash(this.all('SELECT id, updatedAt FROM knowledge_entries WHERE slideId=? ORDER BY id', slideId).map((r) => `${r.id}:${r.updatedAt}`).join('|'))
+      : '';
+    this.run('INSERT OR REPLACE INTO gap_checks VALUES(?,?,?)', pageId, entryHash, now());
+  }
+  dismissGap(studentId: string, gapId: string) {
+    this.run('INSERT OR IGNORE INTO gap_dismissals VALUES(?,?)', studentId, gapId);
+  }
+  dismissedGaps(studentId: string) {
+    return new Set(this.all('SELECT gapId FROM gap_dismissals WHERE studentId=?', studentId).map((r) => r.gapId as string));
   }
 
   // ---------- study records

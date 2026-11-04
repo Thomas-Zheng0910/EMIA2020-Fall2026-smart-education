@@ -9,7 +9,11 @@ export type ToolState = {
   hlSize: number;
   stylusOnly: boolean;
 };
-export type EditorPage = Page & { peerCount: number };
+export type EditorPage = Page & {
+  peerCount: number;
+  /** Changes when this page's suggestions would look different, so the editor refetches them. */
+  suggestVersion?: string;
+};
 export type Selection = {
   pageId: string;
   strokeIds: Set<string>;

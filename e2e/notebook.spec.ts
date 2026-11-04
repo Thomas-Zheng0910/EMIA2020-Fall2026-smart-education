@@ -114,7 +114,7 @@ test.describe.serial('notebook workflow', () => {
     await expect(page.locator('.save-state')).toHaveText('Saved');
     await page.reload();
     await expect(inkPaths(page, 1)).toHaveCount(1);
-    await expect(page.locator('.page-slot').nth(1).locator('.index-chip.ok')).toHaveText(/Sharing 1 note/, { timeout: 20000 });
+    await expect(page.locator('.page-slot').nth(1).locator('.index-chip.ok')).toHaveText(/Shared 1 note/, { timeout: 20000 });
     // back returns where the deck was opened; writing on it shows the ✎ count on the deck itself
     await page.getByRole('button', { name: 'Back to course' }).click();
     const deck = () => page.locator('.doc-card', { hasText: 'Gradient descent' });
@@ -139,25 +139,39 @@ test.describe.serial('notebook workflow', () => {
     await expect(deck().locator('.ink-badge')).toHaveText('✎ 1');
   });
 
-  test('a classmate sees the note quietly and can add or undo it', async ({ page }) => {
+  test('a classmate finds the gap quietly, inline, and can add or undo it', async ({ page }) => {
     await as(page, 'thomas');
     await openLecture(page);
-    await expect(page.locator('.panel')).toHaveCount(0); // suggestions stay quiet until opened
-    const pill = page.locator('.page-slot').nth(1).locator('.peer-pill');
-    await expect(pill).toHaveText('1 classmate note');
-    await expect(page.locator('.page-slot').nth(0).locator('.peer-pill')).toHaveCount(0);
-    await pill.click();
-    const card = page.locator('.peer-card');
-    await expect(card).toContainText('Alex');
-    await expect(card.locator('img.crop')).toBeVisible();
+    // Quiet by default: no panel, no badge on the page — just ink.
+    await expect(page.locator('.panel')).toHaveCount(0);
+    await expect(page.locator('.gap-marker')).toHaveCount(0);
+    // Gaps are found when the page is read, which happens after the student writes.
+    await draw(page, 1);
+    await expect(page.locator('.save-state')).toHaveText('Saved');
+    // Re-reading on open is what lets Alex's note replace the slide as the source of this gap.
+    await expect
+      .poll(async () => page.locator('.page-slot').nth(1).locator('.gap-marker.peer').count(), { timeout: 60000 })
+      .toBe(1);
+    const marker = page.locator('.page-slot').nth(1).locator('.gap-marker');
+    await expect(page.locator('.page-slot').nth(0).locator('.gap-marker')).toHaveCount(0);
+    // Tapping it opens the card in place: a classmate's note, with the handwriting available.
+    await marker.click();
+    const card = page.locator('.suggest-card').first();
+    await expect(card.locator('.suggest-src')).toHaveText("From 1 classmate's note");
+    await expect(card).toContainText('The update rule');
     await card.getByRole('button', { name: 'Add to my notes' }).click();
     const note = page.locator('.page-slot').nth(1).locator('.annotation');
-    await expect(note).toContainText('From a classmate');
+    await expect(note).toContainText('From a classmate’s note');
     await page.keyboard.press('Control+z');
     await expect(note).toHaveCount(0);
+    // Dismissing is remembered: the marker does not come back for this student.
+    await marker.click();
+    await page.locator('.suggest-card').first().getByRole('button', { name: 'Dismiss' }).click();
+    await page.reload();
+    await expect(page.locator('.page-slot').nth(1).locator('.gap-marker')).toHaveCount(0, { timeout: 20000 });
   });
 
-  test('lasso → explain and quiz with sources', async ({ page }) => {
+  test('lasso → a popover beside the selection answers in place', async ({ page }) => {
     await as(page, 'thomas');
     await openLecture(page);
     await page.getByRole('button', { name: 'Lasso' }).click();
@@ -169,18 +183,16 @@ test.describe.serial('notebook workflow', () => {
     for (const [x, y] of [[400, 20], [400, 250], [20, 250], [20, 25]]) await page.mouse.move(b.x + x!, b.y + y!, { steps: 6 });
     await page.mouse.up();
     await page.getByRole('button', { name: '✦ Explain' }).click();
-    const answer = page.locator('.answer');
-    await expect(answer).toContainText('The update rule');
-    await expect(answer.locator('.basis-label')).toHaveText('From classmates · unverified');
-    await answer.locator('.cite-slide').click();
+    // The answer appears in the popover, not in a panel that replaces the page.
+    const pop = page.locator('.lasso-pop');
+    await expect(pop).toBeVisible();
+    await expect(pop).toContainText('The update rule');
+    await expect(pop.locator('.suggest-src')).toHaveText('From a classmate’s note');
+    await pop.locator('.cite-slide').first().click();
     await expect(page.locator('.modal.source')).toContainText('Official course slide');
     await page.keyboard.press('Escape');
-    await page.getByRole('tab', { name: 'Quiz me' }).click();
-    await page.locator('.seg').getByRole('button', { name: 'Lecture' }).click();
-    await page.getByRole('button', { name: 'Start quiz' }).click();
-    await page.locator('.option', { hasText: 'Against the gradient' }).click();
-    await page.getByRole('button', { name: 'Check answers' }).click();
-    await expect(page.locator('.score')).toHaveText('1 / 1 correct');
+    // "Explain / Example / Why?" are chips beside the selection.
+    for (const chip of ['Explain', 'Example', 'Why?']) await expect(page.locator('.lasso-pop .chip', { hasText: chip })).toBeVisible();
   });
 
   test('blank notebook with typed text and inserted pages', async ({ page }) => {

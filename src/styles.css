@@ -884,12 +884,12 @@ code {
   z-index: 2;
   user-select: text;
 }
-.annotation.basis-official {
+.annotation.source-slide {
   border-left-color: var(--official);
   background: #f8fbff;
   border-color: #cfe0ff;
 }
-.annotation.basis-ai {
+.annotation.source-ai {
   border-left-color: var(--ai);
   background: #fbfaff;
   border-color: #ddd4fb;
@@ -928,10 +928,10 @@ code {
   background: var(--peer);
   flex: none;
 }
-.basis-official .basis-dot {
+.source-slide .basis-dot {
   background: var(--official);
 }
-.basis-ai .basis-dot {
+.source-ai .basis-dot {
   background: var(--ai);
 }
 .annotation-body {
@@ -2796,4 +2796,218 @@ body.note-dragging * {
     width: 42px;
     height: 42px;
   }
+}
+
+/* ---------- inline suggestions: quiet markers, a card at the gap, a slim list */
+.page-with-margin {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+.margin-markers {
+  position: relative;
+  width: 18px;
+  flex: none;
+}
+.gap-marker {
+  position: absolute;
+  left: 0;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  display: grid;
+  place-items: center;
+  /* Comfortable tap target on a tablet without drawing a big control on the page. */
+  min-width: 24px;
+  min-height: 24px;
+  margin-left: -3px;
+  cursor: pointer;
+}
+.gap-marker > span {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #b9c2cf;
+  transition: transform 0.12s, background 0.12s;
+}
+.gap-marker.peer > span {
+  background: var(--peer);
+}
+.gap-marker.slide > span {
+  background: var(--official);
+}
+.gap-marker:hover > span,
+.gap-marker:focus-visible > span {
+  transform: scale(1.5);
+}
+.gap-marker:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 50%;
+}
+.gap-card {
+  position: absolute;
+  left: 26px;
+  width: min(360px, 88%);
+  z-index: 6;
+}
+.suggest-card {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 8px 28px rgba(16, 24, 40, 0.14);
+  padding: 10px 12px 8px;
+  font-size: 14px;
+}
+.suggest-card.inline {
+  box-shadow: none;
+  margin-top: 8px;
+}
+.suggest-src {
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 3px;
+}
+.suggest-card h4 {
+  margin: 0 0 4px;
+  font-size: 14.5px;
+}
+.suggest-loading {
+  color: var(--muted);
+  font-size: 13px;
+  padding: 6px 0;
+}
+.suggest-card footer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+.suggest-more {
+  position: relative;
+  margin-left: auto;
+}
+.suggest-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 4px);
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(16, 24, 40, 0.14);
+  padding: 4px;
+  display: grid;
+  min-width: 130px;
+  z-index: 2;
+}
+.suggest-menu button {
+  border: 0;
+  background: none;
+  text-align: left;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+.suggest-menu button:hover {
+  background: #f3f3f0;
+}
+.suggest-list {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+.suggest-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  border: 1px solid transparent;
+  background: none;
+  border-radius: 8px;
+  padding: 7px 8px;
+}
+.suggest-row:hover {
+  background: #f7f7f4;
+  border-color: var(--line);
+}
+.suggest-row b {
+  display: block;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.suggest-row small {
+  color: var(--muted);
+  font-size: 12px;
+}
+.suggest-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-top: 5px;
+  flex: none;
+  background: #b9c2cf;
+}
+.suggest-dot.peer {
+  background: var(--peer);
+}
+.suggest-dot.slide {
+  background: var(--official);
+}
+.lasso-pop {
+  position: fixed;
+  right: 16px;
+  top: 84px;
+  width: min(380px, calc(100vw - 32px));
+  max-height: calc(100vh - 120px);
+  overflow: auto;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 12px 36px rgba(16, 24, 40, 0.18);
+  padding: 10px 12px;
+  z-index: 40;
+}
+.lasso-chips {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.lasso-chips .chip {
+  border: 1px solid var(--line);
+  background: #fff;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 13px;
+}
+.lasso-chips .chip:hover {
+  background: #f3f3f0;
+}
+.lasso-ask {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+.lasso-ask input {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 8px;
+  font-size: 13px;
+}
+.mine-item.disputed {
+  border-color: #f0c9a8;
+  background: #fff9f2;
+}
+.mine-item.shared .tag {
+  color: var(--muted);
 }

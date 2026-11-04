@@ -32,7 +32,7 @@ export function PageChrome({
       : page.indexStatus === 'failed'
         ? { cls: 'warn', text: 'Not shared', title: page.indexError ?? '' }
         : page.indexStatus === 'indexed' && page.sharedCount > 0
-          ? { cls: 'ok', text: `Sharing ${page.sharedCount} note${page.sharedCount > 1 ? 's' : ''}`, title: 'Parts of this page help classmates. Review or stop sharing in Study › Classmates.' }
+          ? { cls: 'ok', text: `Shared ${page.sharedCount} note${page.sharedCount > 1 ? 's' : ''}`, title: 'Parts of this page help classmates. See what you shared in the suggestions panel.' }
           : null;
   return (
     <div className="page-chrome">
@@ -74,12 +74,6 @@ export function PageChrome({
         ))}
       {saveState === 'error' && <span className="index-chip warn">Save failed</span>}
       <div className="spacer" />
-      {page.peerCount > 0 && (
-        <button className="peer-pill" onClick={onClassmates} title="Classmates wrote about this slide">
-          <span className="dot" />
-          {page.peerCount} classmate note{page.peerCount > 1 ? 's' : ''}
-        </button>
-      )}
       <Menu
         label="Page options"
         items={[

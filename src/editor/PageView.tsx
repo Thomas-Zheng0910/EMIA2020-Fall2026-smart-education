@@ -267,7 +267,7 @@ export function PageView({ page, scale, tool, selection, editingText, setEditing
               />
             );
           return (
-            <div key={it.id} data-interactive className={`annotation basis-${it.basis} ${it.collapsed ? 'collapsed' : ''}`} style={{ left: pos.x, top: pos.y, width: it.w }}>
+            <div key={it.id} data-interactive className={`annotation source-${it.source} ${it.collapsed ? 'collapsed' : ''}`} style={{ left: pos.x, top: pos.y, width: it.w }}>
               <div className="annotation-head" onPointerDown={(e) => startItemDrag(e, it)} onPointerMove={onMove} onPointerUp={onUp}>
                 <span className={`basis-dot`} />
                 <span className="annotation-title">{it.title}</span>
@@ -280,7 +280,7 @@ export function PageView({ page, scale, tool, selection, editingText, setEditing
               </div>
               {!it.collapsed && (
                 <div className="annotation-body">
-                  <div className="annotation-label">{it.basis === 'official' ? 'From official slides' : it.basis === 'peer' ? 'From a classmate · unverified' : 'AI interpretation'}</div>
+                  <div className="annotation-label">{it.source === 'slide' ? 'From the slides' : it.source === 'peer' ? 'From a classmate’s note' : 'AI explanation'}</div>
                   <Md text={it.body} />
                   {it.citations.length > 0 && (
                     <div className="citations">

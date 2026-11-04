@@ -14,7 +14,9 @@ Environment=ALLOWED_ORIGINS=https://notebook.zh-thomas.party
 # (tsx watch) and frontend edits rebuild dist/ (vite build --watch). Nobody has to
 # remember a manual restart, so the public demo never lags the working copy.
 ExecStart=/home/chzheng/.local/share/classflow-toolchain/node-v24.12.0-linux-arm64/bin/npm run serve
-Restart=on-failure
+# Restart whatever happens: a dead API is a dead site, and a child that exits 0 would otherwise
+# leave the service stopped and the public hostname answering 502.
+Restart=always
 RestartSec=3
 KillMode=mixed
 TimeoutStopSec=20

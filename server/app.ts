@@ -6,12 +6,13 @@ import { mkdir, readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { z } from 'zod';
 import sharp from 'sharp';
-import { Store, AppError } from './db';
+import { Store, AppError, hash } from './db';
 import { ModelGateway } from './ai';
 import { Jobs } from './jobs';
 import { importLecture, importNotebookPdf, openLectureNotebook, fileLectureNotebook, addBlankPage, storeFile, PAPER_HEIGHT } from './importer';
 import { renderPage, cropPng } from './render';
 import { ask, makeQuiz, gradeQuiz } from './study';
+import { pageSuggestions, expandGap } from './suggestions';
 import type { Bootstrap, Item, Stroke } from '../shared/types';
 
 const num = z.number().finite();
@@ -154,9 +155,25 @@ export async function buildApp({
     }
     return res.code(404).send({ error: 'Asset not found.' });
   });
+  /**
+   * `suggestVersion` changes whenever this page's gaps or the knowledge behind them do, so the
+   * editor knows to refetch suggestions. Without it a gap keeps saying "From slide 12" after a
+   * classmate's note already covers it, until the student happens to write again.
+   */
+  const suggestVersion = (pid: string) =>
+    hash(store.gaps(pid).map((g) => `${g.id}:${g.entryIds.join(',')}:${g.missing}`).join('|'));
   const pageStatus = (pid: string) => {
     const p = store.page(pid);
-    return { id: p.id, revision: p.revision, indexStatus: p.indexStatus, indexError: p.indexError, link: p.link, sharedCount: p.sharedCount, linkedSlides: p.linkedSlides };
+    return {
+      id: p.id,
+      revision: p.revision,
+      indexStatus: p.indexStatus,
+      indexError: p.indexError,
+      link: p.link,
+      sharedCount: p.sharedCount,
+      linkedSlides: p.linkedSlides,
+      suggestVersion: suggestVersion(p.id),
+    };
   };
 
   app.get('/api/health', async () => ({ ok: true }));
@@ -164,7 +181,11 @@ export async function buildApp({
     const prog = new Map(store.lectureProgress(courseId, sid).map((p) => [p.lectureId, p]));
     return store.lectures(courseId).map((l) => {
       const p = prog.get(l.id);
-      return { ...l, progress: { notebookId: p?.notebookId ?? null, written: p?.written ?? 0, peerNotes: p?.peerNotes ?? 0, updatedAt: p?.updatedAt ?? null } };
+      return {
+        ...l,
+        topics: store.topics(l.id),
+        progress: { notebookId: p?.notebookId ?? null, written: p?.written ?? 0, peerNotes: p?.peerNotes ?? 0, updatedAt: p?.updatedAt ?? null },
+      };
     });
   };
   app.get('/api/bootstrap', async (req): Promise<Bootstrap> => {
@@ -289,7 +310,7 @@ export async function buildApp({
     return { id: nid };
   });
   const notebookPages = (nid: string, studentId: string) => {
-    const pages = store.pages(nid).map(({ notebookStudentId: _a, courseId: _b, contentHash: _c, indexedRevision: _d, image: _e, ...p }) => p);
+    const pages = store.pages(nid).map(({ notebookStudentId: _a, courseId: _b, contentHash: _c, indexedRevision: _d, image: _e, ...p }) => ({ ...p, suggestVersion: suggestVersion(p.id) }));
     const counts: Record<string, number> = {};
     const lectureIds = new Set(pages.map((p) => p.link.lectureId).filter(Boolean) as string[]);
     for (const lid of lectureIds) Object.assign(counts, store.peerCounts(lid, studentId));
@@ -302,7 +323,16 @@ export async function buildApp({
   /** Lightweight per-page status (indexing, links, classmate counts) without ink. */
   app.get('/api/notebooks/:id/status', async (req) => {
     const nb = ownNotebook(req, (req.params as { id: string }).id);
-    return notebookPages(nb.id, nb.studentId).map((p) => ({ id: p.id, indexStatus: p.indexStatus, indexError: p.indexError, link: p.link, sharedCount: p.sharedCount, linkedSlides: p.linkedSlides, peerCount: p.peerCount }));
+    return notebookPages(nb.id, nb.studentId).map((p) => ({
+      id: p.id,
+      indexStatus: p.indexStatus,
+      indexError: p.indexError,
+      link: p.link,
+      sharedCount: p.sharedCount,
+      linkedSlides: p.linkedSlides,
+      peerCount: p.peerCount,
+      suggestVersion: p.suggestVersion,
+    }));
   });
   app.patch('/api/notebooks/:id', async (req) => {
     const nb = ownNotebook(req, (req.params as { id: string }).id);
@@ -372,16 +402,25 @@ export async function buildApp({
     return pageStatus(p.id);
   });
   app.get('/api/pages/:id/shared', async (req) => store.pageFragments(ownPage(req, (req.params as { id: string }).id).id));
-  app.get('/api/pages/:id/classmates', async (req) => {
+  /**
+   * Inline suggestions: this page's gaps with whatever fills them, plus the author's own notes.
+   * Opening a page refreshes gaps once if this slide's knowledge changed since it was last read,
+   * so a classmate's new note replaces "From slide 12" without waiting for the student to write.
+   */
+  app.get('/api/pages/:id/suggestions', async (req) => {
+    const page = ownPage(req, (req.params as { id: string }).id);
+    jobs.refreshGapsOnOpen(page.id);
+    return pageSuggestions(store, page.id, who(req));
+  });
+  /** A gap with neither a classmate entry nor a slide behind it is explained on demand. */
+  app.post('/api/pages/:id/suggestions/:gapId/fill', async (req) => {
     const p = ownPage(req, (req.params as { id: string }).id);
-    const slideId = p.slideId ?? p.link.slideId;
-    const lectureId = p.link.lectureId;
-    if (!lectureId) return { slideId: null, fragments: [], lectureFragments: 0 };
-    return {
-      slideId,
-      fragments: slideId ? store.peerFragments(lectureId, who(req), { slideId }) : [],
-      lectureFragments: store.peerFragments(lectureId, who(req)).length,
-    };
+    return expandGap(store, ai, dataDir, { studentId: who(req), pageId: p.id, gapId: (req.params as { gapId: string }).gapId });
+  });
+  app.post('/api/pages/:id/suggestions/:gapId/dismiss', async (req) => {
+    const p = ownPage(req, (req.params as { id: string }).id);
+    store.dismissGap(who(req), (req.params as { gapId: string }).gapId);
+    return { ok: true };
   });
   app.get('/api/pages/:id/render.png', async (req, res) => {
     const p = ownPage(req, (req.params as { id: string }).id);
@@ -413,22 +452,26 @@ export async function buildApp({
     const slide = f.slideId ? store.slide(f.slideId) : null;
     return { ...f, slide: slide ? { id: slide.id, page: slide.page, title: slide.digest?.title ?? '' } : null };
   });
-  /** Author review: everything I contributed in a course, shared or kept private (with the reason). */
-  app.get('/api/courses/:id/sharing', async (req) => {
-    const c = enrolledIn(req, (req.params as { id: string }).id);
-    const items = store.myFragments(c.id, who(req));
-    const classmates = (store.db.prepare('SELECT COUNT(*) n FROM enrollments WHERE courseId=? AND studentId<>?').get(c.id, who(req)) as { n: number }).n;
-    return { classmates, shared: items.filter((i) => i.shared).length, items };
-  });
-  app.post('/api/fragments/:id/sharing', async (req) => {
-    const f = store.fragment((req.params as { id: string }).id);
-    if (!f || f.studentId !== who(req)) throw new AppError(404, 'Note not found.');
-    store.setWithheld(f.id, !z.object({ shared: z.boolean() }).parse(req.body).shared);
-    return store.fragment(f.id);
-  });
   app.post('/api/fragments/:id/dismiss', async (req) => {
     store.dismiss(who(req), (req.params as { id: string }).id);
     return { ok: true };
+  });
+
+  // ---------------- knowledge entries: reports and rechecks
+  /** "Looks wrong": hides the entry from everyone's suggestions until it is rechecked. */
+  app.post('/api/entries/:id/report', async (req) => {
+    const entryId = (req.params as { id: string }).id;
+    const entry = store.entry(entryId);
+    if (!entry || !store.isEnrolled(who(req), entry.courseId)) throw new AppError(404, 'That suggestion no longer exists.');
+    const reason = z.object({ reason: z.string().max(400).default('') }).parse(req.body ?? {}).reason;
+    store.reportEntry(entryId, who(req), reason);
+    jobs.recheckEntry(entryId);
+    return { ok: true };
+  });
+  /** Marks a notebook as left: its slides' notes are merged and checked for classmates. */
+  app.post('/api/notebooks/:id/close', async (req) => {
+    const nb = ownNotebook(req, (req.params as { id: string }).id);
+    return { slides: jobs.markNotebookDirty(nb.id) };
   });
 
   // ---------------- AI study tools

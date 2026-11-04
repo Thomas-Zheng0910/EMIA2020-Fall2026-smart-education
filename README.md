@@ -6,14 +6,14 @@ Take notes the way you already do: write on lecture slides with a pen or mouse, 
 
 ## Features
 
-- **Courses first**: the front page lists all your courses (cover, lectures, notebooks, classmates, last edit) plus other courses to join, and lets you create one. Opening a course goes to its page (`#course=<id>`) with lectures and notebooks; the top bar shows `Notebook / COMP2211`, and leaving a notebook returns to its course. Lectures, notebooks, classmates' notes, Explain and Quiz are all scoped to the course, and notes are only shared with students enrolled in it.
-- **Course page**: course lectures (rendered from PDFs) and your notebooks; import a lecture PDF or your own notes PDF; new ruled/blank/grid notebooks.
-- **Notebook editor**: pressure-sensitive pen, highlighter, stroke eraser, lasso (select, move, delete, explain, quiz), text boxes, images, undo/redo, zoom, stylus-only mode for tablets, page thumbnails, insert pages after any slide, autosave with revision checks.
-- **Visible, reversible sharing**: joining or creating a course explains automatic sharing; the course page shows how many of your notes help classmates, with a review list where you can stop sharing any item. Items kept private show why (hard to read, lecture unclear, already on the slide, turned off by you).
-- **Automatic organization**: ~6 s after you stop writing, the page is rendered and read by the model. Each fragment is linked to a lecture slide; free pages show "Looks like L4 · slide 11 ✓ change". Only confidently read, confidently linked fragments are shared, under your name. The Study panel shows exactly what each page shares.
-- **Classmates**: per-slide notes from others, with a crop of the original handwriting, the transcription and confidence. Add to my notes (inserted as a separate, labeled sticky note) or Dismiss.
-- **Explain**: lasso a confusing part (or use the whole page) and optionally ask a question. The model sees your page, the selection, every slide digest of the lecture and all classmates' notes, and returns cards labeled *Official slides*, *From classmates · unverified*, or *AI interpretation*, with clickable sources.
-- **Quiz me** (current prototype): lecture, page or selection scope; 4 MCQs whose answers must be supported by an official slide; local grading with explanations and sources. The redesigned Quiz me is a future plan, not part of the demo (see [Future plan](#future-plan-quiz-me)).
+- **Courses first**: the front page lists all your courses (cover, lectures, notebooks, classmates, last edit) plus other courses to join, and lets you create one. Opening a course goes to its file tree (`#course=<id>`); the top bar shows `Notebook / COMP2211`, and leaving a notebook returns to where it was opened. Lectures, notebooks, classmates' notes and suggestions are all scoped to the course, and notes are only shared with students enrolled in it.
+- **One free file tree per course**: folders anywhere, files moved by long-press/right-click (`Move to…`) or drag, and two ordinary starting folders, **Lectures** and **Quizzes**, which you can rename or delete. **My notes** (files you have written on) and **All files** are smart views above the tree, not folders. Official decks are ordinary files: they keep their `L#` and `PDF` badge and a ✎ count wherever they are filed, and opening one is what creates your own copy.
+- **Notebook editor**: pressure-sensitive pen, highlighter, stroke eraser, lasso (select, move, delete, explain), text boxes, images, undo/redo, zoom, stylus-only mode for tablets, page thumbnails, insert pages after any slide, autosave with revision checks.
+- **Course knowledge base**: shortly after you leave a notebook, its slides' notes are grouped into points of knowledge, with an AI-written summary per group; a single classmate's note is shown verbatim, never rewritten. Sources are never listed — cards say *From 3 classmates' notes*, *From slide 12*, or *AI explanation*. A note that contradicts the slide is excluded from every prompt and suggestion, and its author sees why.
+- **Automatic sharing, no controls**: joining or creating a course explains that notes are shared, and there is deliberately no Stop sharing or Manage sharing in the demo. Items the model could not read or link stay private, with the reason shown to their author.
+- **Inline suggestions**: a small marker appears beside the page where something is missing; tapping it opens a card in place, with *Add to my notes* (a separate sticky note) and *Dismiss* (remembered), plus *Not helpful* and *Looks wrong* (which rechecks the note and hides it while that is decided). Nothing covers the page, and the panel stays closed unless you open it.
+- **Circle to ask**: lasso a part and get a popover beside it with *Explain*, *Example*, *Why?* chips and an optional typed question; the answer appears in the same popover with its sources.
+- **Quiz me** is a future plan, not part of the demo (see [Future plan](#future-plan-quiz-me)).
 
 No retrieval index: a lecture's slide digests and classmate notes fit easily in DeepSeek's 1M-token context window, so each request sends the whole lecture context. See `docs/superpowers/specs/2026-11-02-notebook-v2-design.md`.
 
@@ -53,6 +53,8 @@ If the default Playwright browser is missing, set `PLAYWRIGHT_CHROMIUM_EXECUTABL
 ## Future plan: Quiz me
 
 Agreed with the user on 4 Nov 2026. **Not part of the demo.** The demo focuses on the course file tree, the shared course knowledge base and inline suggestions. Quiz me will be built later and leaves the study panel.
+
+The `POST /api/quizzes` and `/api/quizzes/:id/grade` routes are still in place (and tested), so the future UI has something to call, but no screen in the demo reaches them.
 
 - **Entry**: a shortcut in the editor (circle a part → "Quiz me on this", or a header button) opens a quiz builder for the course. It is not a tab in the study panel.
 - **Material**: the student picks any files in the course: lecture PDFs (official slides), their own notebooks or pages, imported PDFs, and earlier quiz results. Only the picked files are used; classmates' knowledge is not added automatically.

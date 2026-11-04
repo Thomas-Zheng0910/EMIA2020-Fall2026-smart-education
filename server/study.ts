@@ -2,50 +2,61 @@ import { z } from 'zod';
 import { Store, AppError, id } from './db';
 import { ModelGateway, type Img } from './ai';
 import { renderPage, cropPng } from './render';
-import type { AskCard, Basis, Citation, Quiz, QuizResult, QuizScope } from '../shared/types';
+import type { AskCard, Basis, Citation, Quiz, QuizResult, QuizScope, SuggestionSource } from '../shared/types';
 
 type Ctx = { text: string; refs: Map<string, Citation> };
 
-/** Puts the whole lecture (slide digests + visible classmate notes) into one prompt: no retrieval index needed. */
+/**
+ * Puts the whole lecture into one prompt: the slide digests plus the course knowledge base.
+ * Entries are what the merge job distilled from everyone's notes; disputed ones stay out.
+ */
 export function lectureContext(store: Store, lectureId: string, viewer: string, focusSlideId?: string | null): Ctx {
   const lec = store.lecture(lectureId);
   const refs = new Map<string, Citation>();
   const lines = [`LECTURE ${lec.number}: ${lec.title}`, '', 'OFFICIAL SLIDES (cite as S<page>):'];
-  for (const s of store.slides(lectureId)) {
+  const slides = store.slides(lectureId);
+  for (const s of slides) {
     const ref = `S${s.page}`;
     const title = s.digest?.title ?? s.text.split('\n')[0]?.slice(0, 80) ?? '';
     refs.set(ref, { kind: 'slide', slideId: s.id, lectureNumber: lec.number, page: s.page, label: `L${lec.number} · slide ${s.page}${title ? ` · ${title}` : ''}` });
     const body = s.digest ? `${s.digest.summary}${s.digest.formulas.length ? ' Formulas: ' + s.digest.formulas.join('; ') : ''}` : s.text.replace(/\s+/g, ' ').slice(0, 900);
     lines.push(`[${ref}]${s.id === focusSlideId ? ' (CURRENT SLIDE)' : ''} ${title}: ${body}`);
   }
-  lines.push('', 'CLASSMATE NOTES (student-derived, unverified; cite as F<n>):');
-  const frags = store.peerFragments(lectureId, viewer, { includeDismissed: true });
-  frags.slice(0, 300).forEach((f, i) => {
-    const ref = `F${i + 1}`;
-    const slide = f.slideId ? store.slide(f.slideId) : null;
-    refs.set(ref, { kind: 'fragment', fragmentId: f.id, author: f.authorName, label: `${f.authorName}'s note${slide ? ` · slide ${slide.page}` : ''}` });
-    lines.push(`[${ref}] (${f.kind}, ${slide ? `slide ${slide.page}` : 'lecture'}, by ${f.authorName}) ${f.text.replace(/\s+/g, ' ')}`);
-  });
-  if (!frags.length) lines.push('(none yet)');
+  lines.push('', "COURSE KNOWLEDGE BASE (distilled from classmates' notes; cite as E<n>):");
+  let n = 0;
+  for (const s of slides) {
+    for (const e of store.entries(s.id)) {
+      if (e.excludedReason) continue; // a disputed entry never feeds a prompt
+      const ref = `E${e.id}`;
+      refs.set(ref, { kind: 'entry', entryId: e.id, slideId: s.id, lectureNumber: lec.number, page: s.page, label: `slide ${s.page} · classmates' notes` });
+      lines.push(`[${ref}] (slide ${s.page}) ${e.title}: ${e.summary.replace(/\s+/g, ' ')}`);
+      n++;
+    }
+  }
+  if (!n) lines.push('(none yet)');
   return { text: lines.join('\n'), refs };
 }
 
 function cite(refs: Map<string, Citation>, raw: string[]) {
+  // Model output is case-insensitive about refs it was given ("s12", "S12"), but entry ids are
+  // UUIDs whose hex is lowercase, so compare upper-cased on both sides.
+  const norm = new Map([...refs.entries()].map(([k, v]) => [k.toUpperCase(), v]));
   const out: Citation[] = [];
   for (const r of raw) {
-    const c = refs.get(r.trim().replace(/^\[|\]$/g, '').toUpperCase());
+    const c = norm.get(r.trim().replace(/^\[|\]$/g, '').toUpperCase());
     if (c && !out.includes(c)) out.push(c);
   }
   return out;
 }
 
-function settleBasis(claimed: Basis, citations: Citation[]): Basis {
+/** The neutral source a card shows, settled against what its citations actually resolved to. */
+function settleSource(claimed: Basis, citations: Citation[]): SuggestionSource {
   const hasSlide = citations.some((c) => c.kind === 'slide');
-  const hasPeer = citations.some((c) => c.kind === 'fragment');
-  if (claimed === 'official' && hasSlide) return 'official';
+  const hasPeer = citations.some((c) => c.kind === 'entry' || c.kind === 'fragment');
   if (claimed === 'peer' && hasPeer) return 'peer';
-  if (claimed === 'ai') return 'ai';
-  return hasSlide ? 'official' : hasPeer ? 'peer' : 'ai';
+  if (hasPeer) return 'peer';
+  if (hasSlide) return 'slide';
+  return 'ai';
 }
 
 async function pageImages(store: Store, dataDir: string, pageId: string, bbox?: [number, number, number, number] | null): Promise<Img[]> {
@@ -92,21 +103,37 @@ export async function ask(
 
 TASK: The student is reviewing their notes (images below)${input.bbox ? ' and selected a specific part' : ''}.
 ${input.question ? `Their question: "${input.question.slice(0, 600)}"` : 'Find what is missing, unclear or incomplete in their notes for this part and fill the gap.'}
-Return 1-3 cards that each fill one concrete gap (a missing step, the reason behind a claim, an example). Prefer content supported by the official slides and classmate notes above. Use separate cards for:
-- basis "official": restates/explains what the cited slides teach.
-- basis "peer": an explanation that comes from cited classmate notes (say so, it is unverified).
-- basis "ai": your own interpretation not directly stated in any source (still cite the closest slide if any).
-If a classmate note contradicts a slide or another note, describe it in "conflict". Keep each body short (under 120 words), in Markdown with LaTeX. Citations are the bracket refs like "S12" or "F3".`,
+Return 1-3 cards that each fill one concrete gap (a missing step, the reason behind a claim, an example). Prefer the course knowledge base and the official slides above over your own knowledge. Use source "peer" when the explanation comes from a cited knowledge entry, "official" when it restates a cited slide, and "ai" for your own interpretation.
+Keep each body short (under 120 words), in Markdown with LaTeX. Citations are the bracket refs like "S12" or "E<id>".`,
     Ask,
     images,
   );
   const cards: AskCard[] = out.cards.map((c) => {
     const citations = cite(ctx.refs, c.citations);
-    return { id: id(), title: c.title, body: c.body, basis: settleBasis(c.basis, citations), citations, conflict: c.conflict || null };
+    return { id: id(), title: c.title, body: c.body, source: settleSource(c.basis, citations), citations, conflict: c.conflict || null };
   });
-  const aid = id();
-  store.saveAsk(aid, input.studentId, input.pageId, page.revision, cards);
-  return { id: aid, pageId: input.pageId, pageRevision: page.revision, cards };
+  return { pageId: input.pageId, pageRevision: page.revision, cards };
+}
+
+/** One gap filled on its own, for a card that has no peer entry and no slide text to show. */
+export async function fillGap(
+  store: Store,
+  ai: ModelGateway,
+  dataDir: string,
+  input: { studentId: string; pageId: string; missing: string; bbox: [number, number, number, number] | null },
+): Promise<{ title: string; body: string; citations: Citation[] }> {
+  const { lectureId, slideId } = resolveLecture(store, input.pageId);
+  const ctx = lectureContext(store, lectureId, input.studentId, slideId);
+  const images = await pageImages(store, dataDir, input.pageId, input.bbox);
+  const out = await ai.json(
+    `${ctx.text}
+
+The notes are missing: "${input.missing.slice(0, 400)}".
+TASK: fill this gap in 2-4 sentences, using the official slides and your own knowledge. Cite slides as S<page> when used, knowledge entries as E<id>. LaTeX for math.`,
+    z.object({ title: z.string().max(140), body: z.string().max(3000), citations: z.array(z.string()).max(6) }),
+    images,
+  );
+  return { title: out.title, body: out.body, citations: cite(ctx.refs, out.citations) };
 }
 
 const QuizOut = z.object({

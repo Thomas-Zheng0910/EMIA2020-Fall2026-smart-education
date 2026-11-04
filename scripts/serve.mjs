@@ -26,8 +26,13 @@ const stop = (code) => {
   setTimeout(() => process.exit(code), 300).unref();
 };
 
-// A child that exits on its own (a crash, not a file-change restart) ends the unit.
-for (const c of children) c.on('exit', (code) => stop(code ?? 1));
+/**
+ * A child that exits on its own ends the unit. The exit is *always* a failure as far as systemd is
+ * concerned, even if the child exited 0: a dead API means a dead site, and `Restart=on-failure`
+ * would otherwise leave it down. (This happened: a syntax error during an edit exited 0 and the
+ * public hostname served 502 for an hour.)
+ */
+for (const c of children) c.on('exit', () => stop(1));
 
 for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => stop(0));
 

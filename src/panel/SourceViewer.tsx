@@ -20,7 +20,9 @@ export function SourceViewer({ citation, onClose }: { citation: Citation; onClos
     setSlide(null);
     setFrag(null);
     setError(null);
+    // An entry citation shows the slide it lives on: what the classmates' notes were about.
     if (citation.kind === 'slide') api(`/api/slides/${citation.slideId}`).then(setSlide).catch((e) => setError(e.message));
+    else if (citation.kind === 'entry') api(`/api/slides/${citation.slideId}`).then(setSlide).catch((e) => setError(e.message));
     else api(`/api/fragments/${citation.fragmentId}`).then(setFrag).catch((e) => setError(e.message));
   }, [citation]);
   return (
@@ -48,13 +50,11 @@ export function SourceViewer({ citation, onClose }: { citation: Citation; onClos
         )}
         {frag && (
           <>
-            <div className="source-kind peer">Classmate note · unverified</div>
-            <h3>
-              {frag.authorName}’s notes{frag.slide ? ` on slide ${frag.slide.page}` : ''}
-            </h3>
+            <div className="source-kind peer">A classmate’s note</div>
+            <h3>Notes{frag.slide ? ` on slide ${frag.slide.page}` : ''}</h3>
             <img className="source-img crop" src={`/api/fragments/${frag.id}/crop.png`} alt="Original handwriting" />
             <div className="digest">
-              <span className="muted small">AI transcription ({Math.round(frag.confidence * 100)}% confident)</span>
+              <span className="muted small">Transcribed by AI</span>
               <Md text={frag.text} />
             </div>
           </>

@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { Citation, Item, Notebook, Stroke } from '../../shared/types';
-import { api, ApiError, upload, uid } from '../api';
+import type { Citation, Item, Notebook, Stroke, Suggestion } from '../../shared/types';
+import { api, ApiError, upload, uid, getStudent } from '../api';
 import { PageView, StrokeLayer, selectionBox } from './PageView';
 import { Toolbar } from './Toolbar';
-import { Panel, type PanelTab, type AskTarget } from '../panel/Panel';
+import { MarginMarkers, SuggestionCard, LassoPopover, SuggestionsPanel, useSuggestions, type AddFn } from '../panel/Panel';
 import { SourceViewer } from '../panel/SourceViewer';
 import { PageChrome } from './PageChrome';
 import { useBoot } from '../boot';
@@ -28,19 +28,22 @@ export function Editor({ notebookId, onBack, onToast }: { notebookId: string; on
   const [current, setCurrent] = useState<string | null>(null);
   const [selection, setSelection] = useState<Selection | null>(null);
   const [editingText, setEditingText] = useState<string | null>(null);
-  // Quiet by default: the study panel opens only when the student asks; the choice is remembered.
-  const [panel, setPanelState] = useState<{ open: boolean; tab: PanelTab }>({
+  // Quiet by default: the panel opens only when the student asks; the choice is remembered.
+  const [panel, setPanelState] = useState<{ open: boolean }>({
     open: readMigrated('notebook.panel') === 'open' && window.innerWidth > 1100,
-    tab: 'classmates',
   });
-  const setPanel = (next: { open: boolean; tab: PanelTab } | ((p: { open: boolean; tab: PanelTab }) => { open: boolean; tab: PanelTab })) =>
+  const setPanel = (next: { open: boolean } | ((p: { open: boolean }) => { open: boolean })) =>
     setPanelState((prev) => {
       const v = typeof next === 'function' ? next(prev) : next;
       localStorage.setItem('notebook.panel', v.open ? 'open' : 'closed');
       return v;
     });
-  const [askTarget, setAskTarget] = useState<AskTarget | null>(null);
-  const [quizSelection, setQuizSelection] = useState<AskTarget | null>(null);
+  /**
+   * The suggestion card open at a gap. The card itself is held, not its id: a suggestions
+   * refresh (a re-read after writing) must not blink an open card out from under the student.
+   */
+  const [openGap, setOpenGap] = useState<Suggestion | null>(null);
+  const [lasso, setLasso] = useState<{ pageId: string; bbox: [number, number, number, number] } | null>(null);
   const [source, setSource] = useState<Citation | null>(null);
   const [saveState, setSaveState] = useState<Record<string, SaveState>>({});
   const [showThumbs, setShowThumbs] = useState(window.innerWidth > 800);
@@ -120,8 +123,17 @@ export function Editor({ notebookId, onBack, onToast }: { notebookId: string; on
       if (dirty.current.size || inflight.current.size) e.preventDefault();
     };
     window.addEventListener('beforeunload', beforeUnload);
-    return () => window.removeEventListener('beforeunload', beforeUnload);
-  }, []);
+    // A tab closed or hidden is also "leaving": flush what is unsaved and let the server merge.
+    const onHide = () => {
+      if (document.visibilityState !== 'hidden') return;
+      for (const pid of [...dirty.current]) flush(pid);
+    };
+    document.addEventListener('visibilitychange', onHide);
+    return () => {
+      window.removeEventListener('beforeunload', beforeUnload);
+      document.removeEventListener('visibilitychange', onHide);
+    };
+  }, [flush]);
   const saveAll = async () => {
     for (const pid of [...dirty.current]) {
       clearTimeout(timers.current.get(pid));
@@ -253,6 +265,8 @@ export function Editor({ notebookId, onBack, onToast }: { notebookId: string; on
 
   // ---------- status polling: fast while any page is being organized, slow otherwise (new classmate notes)
   const currentPage = pages.find((p) => p.id === current) ?? null;
+  // One suggestion request per page version: the markers, the panel and the inline card share it.
+  const suggestions = useSuggestions(currentPage, onToast);
   useEffect(() => {
     if (current) lastPage.set(notebookId, current);
   }, [current, notebookId]);
@@ -296,16 +310,15 @@ export function Editor({ notebookId, onBack, onToast }: { notebookId: string; on
       Math.min(1, (b[2] - b[0]) / page.width),
       Math.min(1, (b[3] - b[1]) / page.height),
     ];
-    const target = { pageId: page.id, bbox, nonce: uid() };
     setCurrent(page.id);
-    if (action === 'ask') setAskTarget(target);
-    else setQuizSelection(target);
-    setPanel({ open: true, tab: action === 'ask' ? 'ask' : 'quiz' });
+    // Circling a part opens the popover in place; it answers without leaving the page.
+    if (action === 'ask') setLasso({ pageId: page.id, bbox });
+    else setPanel({ open: true });
   };
 
   const addAnnotation = (
     pid: string,
-    a: { title: string; body: string; basis: 'official' | 'peer' | 'ai'; citations: Citation[] },
+    a: { title: string; body: string; source: Suggestion['source']; citations: Citation[] },
     near?: [number, number, number, number] | null,
   ) => {
     const page = pagesRef.current.find((p) => p.id === pid);
@@ -321,9 +334,28 @@ export function Editor({ notebookId, onBack, onToast }: { notebookId: string; on
       else (x = Math.max(8, Math.min(page.width - w - 8, bx))), (y = by + bh + 12);
       y = Math.max(8, Math.min(page.height - 60, y));
     }
-    const item: Item = { id: uid(), type: 'annotation', x, y, w, ...a };
+    const item: Item = { id: uid(), type: 'annotation', x, y, w, title: a.title, body: a.body, source: a.source, citations: a.citations };
     commit(pid, page.strokes, [...page.items, item]);
     onToast('Added to your notes as a separate note. Ctrl+Z to undo.');
+  };
+
+  /**
+   * Leaving is the moment the notes are uploaded: the server merges this notebook's slides so
+   * classmates see them. Sent with keepalive so closing a tab still counts.
+   */
+  const closeNotebook = async () => {
+    if (!notebook) return;
+    try {
+      await fetch(`/api/notebooks/${notebook.id}/close`, { method: 'POST', keepalive: true, headers: { 'x-student-id': getStudent() } });
+    } catch {
+      /* the periodic sweep will pick these slides up */
+    }
+  };
+
+  const reportSuggestion = async (g: Suggestion) => {
+    if (!g.entryId) return;
+    await api(`/api/entries/${g.entryId}/report`, { method: 'POST', json: { reason: '' } }).catch(() => {});
+    onToast('Thanks — that suggestion is hidden while it is checked.');
   };
 
   const insertPage = async (after: string | null, kind: 'blank' | 'ruled' | 'grid' = 'ruled') => {
@@ -409,11 +441,11 @@ export function Editor({ notebookId, onBack, onToast }: { notebookId: string; on
   return (
     <div className={`editor ${panel.open ? 'panel-open' : ''}`}>
       <header className="editor-top">
-        <button className="icon-btn" onClick={async () => (await saveAll(), onBack(notebook.courseId))} title="Back to course" aria-label="Back to course">
+        <button className="icon-btn" onClick={async () => (await saveAll(), await closeNotebook(), onBack(notebook.courseId))} title="Back to course" aria-label="Back to course">
           ‹
         </button>
         {boot.course?.id === notebook.courseId && (
-          <button className="course-badge as-link" onClick={async () => (await saveAll(), onBack(notebook.courseId))} title={boot.course.name}>
+          <button className="course-badge as-link" onClick={async () => (await saveAll(), await closeNotebook(), onBack(notebook.courseId))} title={boot.course.name}>
             {boot.course.code}
           </button>
         )}
@@ -474,23 +506,51 @@ export function Editor({ notebookId, onBack, onToast }: { notebookId: string; on
                 saveState={saveState[p.id]}
                 onInsert={(kind) => insertPage(p.id, kind)}
                 onDelete={() => deletePage(p.id)}
-                onClassmates={() => (goto(p.id), setPanel({ open: true, tab: 'classmates' }))}
+                onClassmates={() => (goto(p.id), setPanel({ open: true }))}
                 onLink={(l, s) => setLink(p.id, l, s)}
               />
-              <LazyPage height={p.height * scale} root={scroller}>
-                <PageView
-                  page={p}
-                  scale={scale}
-                  tool={tool}
-                  selection={selection}
-                  setSelection={setSelection}
-                  editingText={editingText}
-                  setEditingText={setEditingText}
-                  commit={commit}
-                  onSelectionAction={selectionAction}
-                  onCitation={setSource}
-                />
-              </LazyPage>
+              <div className="page-with-margin">
+                {/* Quiet by default: a small marker beside each gap, nothing else until it is tapped. */}
+                {p.id === current && suggestions.gaps.length > 0 && (
+                  <MarginMarkers page={p} scale={scale} gaps={suggestions.gaps} onOpen={(g) => (goto(p.id), setOpenGap(g))} />
+                )}
+                <LazyPage height={p.height * scale} root={scroller}>
+                  <PageView
+                    page={p}
+                    scale={scale}
+                    tool={tool}
+                    selection={selection}
+                    setSelection={setSelection}
+                    editingText={editingText}
+                    setEditingText={setEditingText}
+                    commit={commit}
+                    onSelectionAction={selectionAction}
+                    onCitation={setSource}
+                  />
+                </LazyPage>
+                {openGap && p.id === current && (
+                  <div className="gap-card" style={{ top: Math.max(0, openGap.bbox[1] * p.height) * scale }}>
+                    <SuggestionCard
+                      key={openGap.id}
+                      suggestion={openGap}
+                      onAdd={() => {
+                        addAnnotation(p.id, { title: openGap.title || openGap.missing, body: openGap.body, source: openGap.source, citations: openGap.citations }, openGap.bbox);
+                        setOpenGap(null);
+                      }}
+                      onDismiss={() => {
+                        suggestions.dismiss(openGap);
+                        setOpenGap(null);
+                      }}
+                      onCitation={setSource}
+                      onReport={() => {
+                        reportSuggestion(openGap);
+                        setOpenGap(null);
+                      }}
+                      onClose={() => setOpenGap(null)}
+                    />
+                  </div>
+                )}
+              </div>
             </section>
           ))}
           <div className="canvas-end">
@@ -511,24 +571,37 @@ export function Editor({ notebookId, onBack, onToast }: { notebookId: string; on
           </button>
         </div>
         {panel.open && currentPage && (
-          <Panel
-            tab={panel.tab}
-            setTab={(tab) => setPanel({ open: true, tab })}
-            onClose={() => setPanel((p) => ({ ...p, open: false }))}
+          <SuggestionsPanel
             page={currentPage}
-            pageNumber={pageIndex.get(currentPage.id)! + 1}
             notebook={notebook}
-            askTarget={askTarget}
-            quizSelection={quizSelection}
-            clearAskTarget={() => setAskTarget(null)}
+            pageNumber={pageIndex.get(currentPage.id)! + 1}
+            gaps={suggestions.gaps}
+            own={suggestions.data?.own ?? []}
+            unlinked={suggestions.data?.unlinked ?? false}
+            onClose={() => setPanel((p) => ({ ...p, open: false }))}
+            onScrollTo={(g) => {
+              setOpenGap(g);
+              goto(currentPage.id);
+            }}
             onAdd={addAnnotation}
             onCitation={setSource}
-            onDismissPeer={() => setPages((ps) => ps.map((p) => (p.id === currentPage.id ? { ...p, peerCount: Math.max(0, p.peerCount - 1) } : p)))}
-            onToast={onToast}
-            beforeAsk={saveAll}
+            onDismiss={suggestions.dismiss}
+            onReport={reportSuggestion}
           />
         )}
       </div>
+      {lasso && currentPage && lasso.pageId === currentPage.id && (
+        <LassoPopover
+          pageId={lasso.pageId}
+          bbox={lasso.bbox}
+          onAdd={(a) => {
+            addAnnotation(currentPage.id, a, lasso.bbox);
+            setLasso(null);
+          }}
+          onCitation={setSource}
+          onClose={() => setLasso(null)}
+        />
+      )}
       {source && <SourceViewer citation={source} onClose={() => setSource(null)} />}
     </div>
   );

@@ -1,24 +1,64 @@
 import { describe, it, expect } from 'vitest';
 import { setup, upload, waitFor } from './helpers';
 
+/** Counts page reads so a later read can report different wording for the same note. */
+let indexCalls = 0;
 const handler = (prompt: string) => {
   if (prompt.includes('study digest'))
     return { slides: [...prompt.matchAll(/--- Slide (\d+)/g)].map((m) => ({ page: Number(m[1]), title: `Title ${m[1]}`, summary: `Summary of slide ${m[1]}`, formulas: [], topics: ['bayes'] })) };
-  if (prompt.includes('Extract the course knowledge'))
+  if (prompt.includes('Extract the course knowledge')) {
+    // A gap the notes leave. When the slide already has entries, the gap points at the first one,
+    // which is what makes the card a classmate's note rather than a slide card.
+    const known = /\[E([\w-]+)\]/.exec(prompt)?.[1];
+    indexCalls++;
     return {
       link: { lectureNumber: 3, slide: 2, confidence: 0.9 },
       fragments: [
-        { kind: 'explanation', text: 'Posterior is prior times likelihood, normalized by $P(B)$.', topic: 'Bayes rule', confidence: 0.92, bbox: [0.1, 0.1, 0.5, 0.2] },
+        // Rewording on a later read is what supersedes the earlier note.
+        {
+          kind: 'explanation',
+          text: indexCalls === 1 ? 'Posterior is prior times likelihood, normalized by $P(B)$.' : 'Posterior: prior × likelihood ÷ evidence.',
+          topic: 'Bayes rule',
+          confidence: 0.92,
+          bbox: [0.1, 0.1, 0.5, 0.2],
+        },
         { kind: 'other', text: 'blurry scribble', topic: '?', confidence: 0.3, bbox: [0.1, 0.5, 0.2, 0.1] },
       ],
+      gaps: [{ bbox: [0.2, 0.4, 0.4, 0.2], missing: 'Why divide by the evidence?', entryIds: known ? [known] : [] }],
     };
-  if (prompt.includes('TASK: The student is reviewing'))
+  }
+  // The merge job: group notes into knowledge entries. One group of two notes, verbatim elsewhere.
+  if (prompt.includes('Group fragments that make the same point')) {
+    const frags = [...prompt.matchAll(/\{fragmentId:(f[^,]+), text:"([^"]*)"/g)].map((m) => ({ id: m[1], text: m[2] }));
+    const ids = [...prompt.matchAll(/"id":"([^"]+)"/g)].map((m) => m[1]);
+    return {
+      entries: [
+        {
+          id: null,
+          title: 'Normalize by the evidence',
+          summary: 'The posterior is the prior times the likelihood, divided by $P(B)$ so the probabilities sum to one.',
+          fragmentIds: ids.length ? ids : frags.map((f) => f.id),
+          contradicts: null,
+          disputeExplanation: null,
+        },
+      ],
+    };
+  }
+  if (prompt.includes('Name 5-15 topics'))
+    return { topics: [{ name: 'Bayes rule', slidePages: [1, 2] }, { name: 'Naive assumption', slidePages: [3] }] };
+  if (prompt.includes('fill this gap in 2-4 sentences'))
+    return { title: 'Why divide by $P(B)$', body: 'To normalize the posterior so it sums to one.', citations: ['S2'] };
+  if (prompt.includes('does this entry reflect the slide'))
+    return { disputed: true, explanation: 'The note says the opposite of the slide.' };
+  if (prompt.includes('TASK: The student is reviewing')) {
+    const entry = /\[E([\w-]+)\]/.exec(prompt)?.[1];
     return {
       cards: [
-        { title: 'Missing normalization', body: 'Divide by $P(B)$.', basis: 'peer', citations: ['F1', 'S99'], conflict: null },
+        { title: 'Missing normalization', body: 'Divide by $P(B)$.', basis: 'peer', citations: [entry ? `E${entry}` : 'E-nope', 'S99'], conflict: null },
         { title: 'Claimed official without source', body: 'x', basis: 'official', citations: ['X1'], conflict: null },
       ],
     };
+  }
   if (prompt.includes('multiple-choice'))
     return {
       questions: [
@@ -30,6 +70,7 @@ const handler = (prompt: string) => {
 };
 
 async function seeded() {
+  indexCalls = 0; // each test starts from a first reading of the page
   const t = await setup(handler);
   const { readFileSync } = await import('node:fs');
   const res = await upload(t.app, '/api/lectures', readFileSync(t.pdf), '3-naive-bayes-full.pdf');
@@ -45,6 +86,19 @@ async function seeded() {
   return { ...t, lecture, as, open };
 }
 const ink = [{ id: 's1', tool: 'pen', color: '#000', size: 4, points: [100, 100, 0.5, 200, 150, 0.5, 300, 120, 0.5] }];
+/** The one note on a page that got shared; the rest are private for a stated reason. */
+const sharedFragmentId = (t: { store: { pageFragments: (id: string) => { id: string; shared: boolean }[] } }, pageId: string) =>
+  t.store.pageFragments(pageId).find((f) => f.shared)!.id;
+/**
+ * Reads a page (indexing is what finds gaps) and returns the suggestions the student would see.
+ * A gap with no entry behind it is what the reader's own note left open.
+ */
+async function readPage(t: any, as: Record<string, string>, page: any, strokes: unknown[], entryId?: string) {
+  const rev = (await t.app.inject({ method: 'PUT', url: `/api/pages/${page.id}`, headers: as, payload: { revision: page.revision, strokes, items: [] } })).json().revision;
+  await t.jobs.indexPage(page.id);
+  if (entryId) t.store.replaceGaps(page.id, rev, [{ bbox: [0.2, 0.4, 0.4, 0.2], missing: 'Why divide by the evidence?', entryIds: [entryId] }]);
+  return (await t.app.inject({ url: `/api/pages/${page.id}/suggestions`, headers: as })).json();
+}
 
 describe('course notebook API', () => {
   it('imports a lecture, renders slides and digests them with images', async () => {
@@ -76,23 +130,35 @@ describe('course notebook API', () => {
     expect(indexCall.images).toBe(1);
     expect(indexCall.prompt).toContain('Summary of slide 2');
 
+    // Closing the notebook is what uploads the notes for classmates; it merges the page's slide.
+    await t.app.inject({ method: 'POST', url: `/api/notebooks/${alex.notebook.id}/close`, headers: t.as('alex') });
+    await waitFor(() => t.jobs.idle);
+    const slideId = (await t.app.inject({ url: `/api/pages/${page.id}/status`, headers: t.as('alex') })).json().link.slideId;
+    const entry = t.store.entries(slideId)[0]!;
+
     const thomas = await t.open('thomas');
     expect(thomas.pages[1].peerCount).toBe(1);
     expect(thomas.pages[0].peerCount).toBe(0);
-    const mates = (await t.app.inject({ url: `/api/pages/${thomas.pages[1].id}/classmates`, headers: t.as('thomas') })).json();
-    expect(mates.fragments).toHaveLength(1);
-    expect(mates.fragments[0].authorName).toBe('Alex');
-    const crop = await t.app.inject({ url: `/api/fragments/${mates.fragments[0].id}/crop.png`, headers: t.as('thomas') });
+    // Thomas reads his own page on the same slide and sees Alex's point offered at his gap.
+    const sugg = await readPage(t, t.as('thomas'), thomas.pages[1], ink, entry.id);
+    expect(sugg.gaps).toHaveLength(1);
+    expect(sugg.gaps[0]).toMatchObject({ source: 'peer', sourceLine: "From 1 classmate's note", title: 'Normalize by the evidence' });
+    // A single-source entry shows the note verbatim (no AI rewrite) and can show the handwriting.
+    expect(sugg.gaps[0].body).toContain('Posterior is prior times likelihood');
+    expect(sugg.gaps[0].fragmentId).toBeTruthy();
+    const crop = await t.app.inject({ url: `/api/fragments/${sugg.gaps[0].fragmentId}/crop.png`, headers: t.as('thomas') });
     expect(crop.headers['content-type']).toContain('image/png');
     // the private low-confidence fragment is not readable by classmates
     const priv = shared.find((f: any) => !f.shared);
     expect((await t.app.inject({ url: `/api/fragments/${priv.id}`, headers: t.as('thomas') })).statusCode).toBe(404);
-    // Alex does not see their own note as a classmate note
-    const own = (await t.app.inject({ url: `/api/pages/${page.id}/classmates`, headers: t.as('alex') })).json();
-    expect(own.fragments).toHaveLength(0);
-    // dismiss hides it for Thomas only
-    await t.app.inject({ method: 'POST', url: `/api/fragments/${mates.fragments[0].id}/dismiss`, headers: t.as('thomas') });
-    expect((await t.app.inject({ url: `/api/pages/${thomas.pages[1].id}/classmates`, headers: t.as('thomas') })).json().fragments).toHaveLength(0);
+    // the author sees their own notes listed, not as a classmate suggestion
+    const ownView = (await t.app.inject({ url: `/api/pages/${page.id}/suggestions`, headers: t.as('alex') })).json();
+    expect(ownView.own.find((o: any) => o.state === 'shared')).toBeTruthy();
+    expect(ownView.own.find((o: any) => o.state === 'private')!.sourceLine).toContain('hard to read');
+    // dismiss hides that gap for Thomas only
+    await t.app.inject({ method: 'POST', url: `/api/pages/${thomas.pages[1].id}/suggestions/${sugg.gaps[0].id}/dismiss`, headers: t.as('thomas') });
+    expect((await t.app.inject({ url: `/api/pages/${thomas.pages[1].id}/suggestions`, headers: t.as('thomas') })).json().gaps).toHaveLength(0);
+    expect((await t.app.inject({ url: `/api/pages/${page.id}/suggestions`, headers: t.as('alex') })).json().own.length).toBeGreaterThan(0);
   });
 
   it('does not re-index or republish when only AI annotations change', async () => {
@@ -126,16 +192,20 @@ describe('course notebook API', () => {
     const alex = await t.open('alex');
     await t.app.inject({ method: 'PUT', url: `/api/pages/${alex.pages[1].id}`, headers: t.as('alex'), payload: { revision: alex.pages[1].revision, strokes: ink, items: [] } });
     await t.jobs.indexPage(alex.pages[1].id);
+    // Merging first is what puts Alex's note in the knowledge base the prompt is built from.
+    await t.app.inject({ method: 'POST', url: `/api/notebooks/${alex.notebook.id}/close`, headers: t.as('alex') });
+    await waitFor(() => t.jobs.idle);
     const thomas = await t.open('thomas');
     const res = await t.app.inject({ method: 'POST', url: '/api/ask', headers: t.as('thomas'), payload: { pageId: thomas.pages[1].id, bbox: [0.1, 0.1, 0.3, 0.3], question: 'why divide?' } });
     expect(res.statusCode).toBe(200);
     const { cards } = res.json();
-    expect(cards[0].basis).toBe('peer');
-    expect(cards[0].citations).toEqual([expect.objectContaining({ kind: 'fragment', author: 'Alex' })]); // S99 dropped
-    expect(cards[1].basis).toBe('ai'); // "official" without any valid slide citation is downgraded
+    expect(cards[0].source).toBe('peer');
+    expect(cards[0].citations).toEqual([expect.objectContaining({ kind: 'entry' })]); // S99 dropped
+    expect(cards[1].source).toBe('ai'); // no valid citation at all, so it is the model's own words
     const call = t.calls.at(-1)!;
     expect(call.images).toBe(2); // page + selection crop
     expect(call.prompt).toContain('why divide?');
+    expect(call.prompt).toContain('COURSE KNOWLEDGE BASE');
     expect(call.prompt).toContain('Posterior is prior times likelihood');
   });
 
@@ -221,42 +291,111 @@ describe('course notebook API', () => {
     expect((await t.app.inject({ url: `/api/pages/${page.id}/shared`, headers: t.as('priya') })).json().every((f: any) => !f.shared)).toBe(true);
   });
 
-  it('lets authors stop sharing, remembers it across re-reads, and explains private items', async () => {
+  it('has no sharing control at all, and keeps private notes private for their stated reason', async () => {
     const t = await seeded();
     const alex = await t.open('alex');
     const page = alex.pages[1];
-    let rev = (await t.app.inject({ method: 'PUT', url: `/api/pages/${page.id}`, headers: t.as('alex'), payload: { revision: page.revision, strokes: ink, items: [] } })).json().revision;
+    const rev = (await t.app.inject({ method: 'PUT', url: `/api/pages/${page.id}`, headers: t.as('alex'), payload: { revision: page.revision, strokes: ink, items: [] } })).json().revision;
     await t.jobs.indexPage(page.id);
-    let mine = (await t.app.inject({ url: `/api/pages/${page.id}/shared`, headers: t.as('alex') })).json();
-    expect(mine.find((f: any) => !f.shared).reason).toBe('unclear');
+    const mine = (await t.app.inject({ url: `/api/pages/${page.id}/shared`, headers: t.as('alex') })).json();
     const shared = mine.find((f: any) => f.shared);
-    // only the author can change sharing
-    expect((await t.app.inject({ method: 'POST', url: `/api/fragments/${shared.id}/sharing`, headers: t.as('thomas'), payload: { shared: false } })).statusCode).toBe(404);
-    await t.app.inject({ method: 'POST', url: `/api/fragments/${shared.id}/sharing`, headers: t.as('alex'), payload: { shared: false } });
-    const thomas = await t.open('thomas');
-    expect(thomas.pages[1].peerCount).toBe(0);
-    // AI-kept-private items can't be force-shared
     const unclear = mine.find((f: any) => f.reason === 'unclear');
-    expect((await t.app.inject({ method: 'POST', url: `/api/fragments/${unclear.id}/sharing`, headers: t.as('alex'), payload: { shared: true } })).statusCode).toBe(400);
-    // a new edit re-reads the page; the withdrawn item stays withdrawn
-    rev = (await t.app.inject({ method: 'PUT', url: `/api/pages/${page.id}`, headers: t.as('alex'), payload: { revision: rev, strokes: [...ink, { ...ink[0], id: 's2' }], items: [] } })).json().revision;
-    await t.jobs.indexPage(page.id);
-    mine = (await t.app.inject({ url: `/api/pages/${page.id}/shared`, headers: t.as('alex') })).json();
-    const again = mine.find((f: any) => f.text === shared.text);
-    expect(again).toMatchObject({ shared: false, reason: 'withheld' });
-    const review = (await t.app.inject({ url: '/api/courses/comp2211/sharing', headers: t.as('alex') })).json();
-    expect(review).toMatchObject({ classmates: 2, shared: 0 });
-    expect(review.items[0]).toMatchObject({ lectureNumber: 3, slidePage: 2, notebookId: alex.notebook.id });
-    await t.app.inject({ method: 'POST', url: `/api/fragments/${again.id}/sharing`, headers: t.as('alex'), payload: { shared: true } });
-    expect((await t.open('thomas')).pages[1].peerCount).toBe(1);
-    // course page progress and the home "Continue" list
+    // The demo deliberately has no stop-sharing: the routes are gone, not merely hidden.
+    expect((await t.app.inject({ method: 'POST', url: `/api/fragments/${shared.id}/sharing`, headers: t.as('alex'), payload: { shared: false } })).statusCode).toBe(404);
+    expect((await t.app.inject({ url: '/api/courses/comp2211/sharing', headers: t.as('alex') })).statusCode).toBe(404);
+    // The AI's own reasons still keep an item private, and the author sees why.
+    expect(unclear.reason).toBe('unclear');
+    const ownView = (await t.app.inject({ url: `/api/pages/${page.id}/suggestions`, headers: t.as('alex') })).json();
+    expect(ownView.own.find((o: any) => o.id === unclear.id)).toMatchObject({ state: 'private' });
+    // Progress and the home "Continue" list are unaffected by the removal.
     const boot = (await t.app.inject({ url: '/api/bootstrap', headers: t.as('alex') })).json();
     expect(boot.lectures[0].progress).toMatchObject({ notebookId: alex.notebook.id, written: 1 });
     expect(boot.recent.map((r: any) => r.id)).toEqual([alex.notebook.id]);
     expect(boot.recent[0].lastPageId).toBe(page.id);
-    const tb = (await t.app.inject({ url: '/api/bootstrap', headers: t.as('thomas') })).json();
-    expect(tb.recent).toEqual([]); // opening a lecture without writing is not "recent work"
-    expect(tb.lectures[0].progress).toMatchObject({ written: 0, peerNotes: 1 });
+    expect(rev).toBe(page.revision + 1);
+  });
+
+  it('merges only changed slides, groups notes into one entry, and skips unchanged slides', async () => {
+    const t = await seeded();
+    const alex = await t.open('alex');
+    const page = alex.pages[1];
+    const rev = (await t.app.inject({ method: 'PUT', url: `/api/pages/${page.id}`, headers: t.as('alex'), payload: { revision: page.revision, strokes: ink, items: [] } })).json().revision;
+    await t.jobs.indexPage(page.id);
+    await t.app.inject({ method: 'POST', url: `/api/notebooks/${alex.notebook.id}/close`, headers: t.as('alex') });
+    await waitFor(() => t.jobs.idle);
+    const slideId = (await t.app.inject({ url: `/api/pages/${page.id}/status`, headers: t.as('alex') })).json().link.slideId;
+    const entries = t.store.entries(slideId);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].title).toBe('Normalize by the evidence');
+    // Only the shared, confidently-read note feeds the entry; the unreadable one does not.
+    expect(t.store.entrySources(entries[0].id).map((f) => f.id)).toEqual([sharedFragmentId(t, page.id)]);
+
+    // Closing again without writing costs no model call.
+    const before = t.calls.length;
+    await t.app.inject({ method: 'POST', url: `/api/notebooks/${alex.notebook.id}/close`, headers: t.as('alex') });
+    await waitFor(() => t.jobs.idle);
+    expect(t.calls.length).toBe(before);
+
+    // A second classmate writing the same point joins the same entry, and it stops being verbatim.
+    const thomas = await t.open('thomas');
+    await t.app.inject({ method: 'PUT', url: `/api/pages/${thomas.pages[1].id}`, headers: t.as('thomas'), payload: { revision: thomas.pages[1].revision, strokes: [{ ...ink[0]!, id: 't1' }], items: [] } });
+    await t.jobs.indexPage(thomas.pages[1].id);
+    await t.app.inject({ method: 'POST', url: `/api/notebooks/${thomas.notebook.id}/close`, headers: t.as('thomas') });
+    await waitFor(() => t.jobs.idle);
+    expect(t.store.entrySourceCount(t.store.entries(slideId)[0].id)).toBe(2);
+    const priya = await t.open('priya');
+    const entryId = t.store.entries(slideId)[0].id;
+    const sugg = await readPage(t, t.as('priya'), priya.pages[1], ink, entryId);
+    expect(sugg.gaps[0].sourceLine).toBe("From 2 classmates' notes");
+    expect(rev).toBe(page.revision + 1);
+  });
+
+  it('drops a disputed entry from suggestions and tells its author why', async () => {
+    const t = await seeded();
+    const alex = await t.open('alex');
+    const page = alex.pages[1];
+    await t.app.inject({ method: 'PUT', url: `/api/pages/${page.id}`, headers: t.as('alex'), payload: { revision: page.revision, strokes: ink, items: [] } });
+    await t.jobs.indexPage(page.id);
+    await t.app.inject({ method: 'POST', url: `/api/notebooks/${alex.notebook.id}/close`, headers: t.as('alex') });
+    await waitFor(() => t.jobs.idle);
+    const slideId = (await t.app.inject({ url: `/api/pages/${page.id}/status`, headers: t.as('alex') })).json().link.slideId;
+    const entryId = t.store.entries(slideId)[0]!.id;
+    const thomas = await t.open('thomas');
+    const before = await readPage(t, t.as('thomas'), thomas.pages[1], ink, entryId);
+    expect(before.gaps[0].entryId).toBeTruthy();
+    // "Looks wrong" rechecks immediately; the mock judges it a mismatch with the slide.
+    expect((await t.app.inject({ method: 'POST', url: `/api/entries/${before.gaps[0].entryId}/report`, headers: t.as('thomas'), payload: { reason: 'misread' } })).statusCode).toBe(200);
+    await waitFor(() => t.store.entry(before.gaps[0].entryId)!.excludedReason === 'disputed');
+    // Gone for everyone else, and never cited in a prompt again.
+    const after = (await t.app.inject({ url: `/api/pages/${thomas.pages[1].id}/suggestions`, headers: t.as('thomas') })).json();
+    expect(after.gaps.some((g: any) => g.entryId === before.gaps[0].entryId)).toBe(false);
+    await t.app.inject({ method: 'POST', url: '/api/ask', headers: t.as('thomas'), payload: { pageId: thomas.pages[1].id } });
+    expect(t.calls.at(-1)!.prompt).not.toContain('Normalize by the evidence');
+    // The author sees the explanation on their own page.
+    const mine = (await t.app.inject({ url: `/api/pages/${page.id}/suggestions`, headers: t.as('alex') })).json();
+    const disputed = mine.own.find((o: any) => o.state === 'disputed');
+    expect(disputed.disputeExplanation).toContain('opposite of the slide');
+    // Another student cannot report into a course they are not in.
+    await t.app.inject({ method: 'DELETE', url: '/api/courses/comp2211/enroll', headers: t.as('priya') });
+    expect((await t.app.inject({ method: 'POST', url: `/api/entries/${before.gaps[0].entryId}/report`, headers: t.as('priya'), payload: {} })).statusCode).toBe(404);
+  });
+
+  it('fills a gap with the slide when no classmate note covers it', async () => {
+    const t = await seeded();
+    const alex = await t.open('alex');
+    const page = alex.pages[1];
+    await t.app.inject({ method: 'PUT', url: `/api/pages/${page.id}`, headers: t.as('alex'), payload: { revision: page.revision, strokes: ink, items: [] } });
+    await t.jobs.indexPage(page.id);
+    // The author's own note leaves a gap, and nobody else has written on this slide yet.
+    const mine = (await t.app.inject({ url: `/api/pages/${page.id}/suggestions`, headers: t.as('alex') })).json();
+    expect(mine.gaps).toHaveLength(1);
+    expect(mine.gaps[0]).toMatchObject({ source: 'slide', sourceLine: 'From slide 2' });
+    expect(mine.gaps[0].body).toContain('Summary of slide 2');
+    expect(mine.gaps[0].citations[0]).toMatchObject({ kind: 'slide', page: 2 });
+    // Filling on demand is only for a gap with nothing stored behind it.
+    const filled = await t.app.inject({ method: 'POST', url: `/api/pages/${page.id}/suggestions/${mine.gaps[0].id}/fill`, headers: t.as('alex') });
+    expect(filled.statusCode).toBe(200);
+    expect(filled.json().body).toContain('sums to one');
   });
 
   it('closes notebooks and slide assets when a student leaves a course', async () => {
@@ -283,146 +422,21 @@ describe('course notebook API', () => {
     expect((await t.app.inject({ url: asset, headers: t.as('priya') })).statusCode).toBe(200);
   });
 
-  it('keeps a dismissed classmate note dismissed when the author re-reads the page', async () => {
+  it('keeps an old citation resolvable when the author edits the note it came from', async () => {
     const t = await seeded();
     const alex = await t.open('alex');
     const page = alex.pages[1];
     let rev = (await t.app.inject({ method: 'PUT', url: `/api/pages/${page.id}`, headers: t.as('alex'), payload: { revision: page.revision, strokes: ink, items: [] } })).json().revision;
     await t.jobs.indexPage(page.id);
-    const thomas = await t.open('thomas');
-    const mates = (await t.app.inject({ url: `/api/pages/${thomas.pages[1].id}/classmates`, headers: t.as('thomas') })).json();
-    expect(mates.fragments).toHaveLength(1);
-    await t.app.inject({ method: 'POST', url: `/api/fragments/${mates.fragments[0].id}/dismiss`, headers: t.as('thomas') });
-    expect((await t.app.inject({ url: `/api/pages/${thomas.pages[1].id}/classmates`, headers: t.as('thomas') })).json().fragments).toHaveLength(0);
-    // the same transcription comes back after Alex edits; the dismissal must survive the new fragment id
+    const original = (await t.app.inject({ url: `/api/pages/${page.id}/shared`, headers: t.as('alex') })).json().find((f: any) => f.shared);
+    // Alex rewrites the note: a new fragment replaces it and the old one is superseded.
     rev = (await t.app.inject({ method: 'PUT', url: `/api/pages/${page.id}`, headers: t.as('alex'), payload: { revision: rev, strokes: [...ink, { ...ink[0], id: 's2' }], items: [] } })).json().revision;
     await t.jobs.indexPage(page.id);
-    expect((await t.app.inject({ url: `/api/pages/${thomas.pages[1].id}/classmates`, headers: t.as('thomas') })).json().fragments).toHaveLength(0);
-    // a classmate who did not dismiss it still sees it
-    const priya = await t.open('priya');
-    expect((await t.app.inject({ url: `/api/pages/${priya.pages[1].id}/classmates`, headers: t.as('priya') })).json().fragments).toHaveLength(1);
-  });
-
-  it('re-reads after a whole-lecture link is confirmed but not after annotations', async () => {
-    const t = await seeded();
-    const nb = (await t.app.inject({ method: 'POST', url: '/api/notebooks', headers: t.as('priya'), payload: { title: 'Revision', paper: 'ruled' } })).json();
-    const page = (await t.app.inject({ url: `/api/notebooks/${nb.id}`, headers: t.as('priya') })).json().pages[0];
-    const base = t.jobs.originalHash(t.store.page(page.id));
-    const annotation = { id: 'a1', type: 'annotation' as const, x: 10, y: 10, w: 200, title: 'AI', body: 'generated', basis: 'ai' as const, citations: [] };
-    expect(t.jobs.originalHash({ ...t.store.page(page.id), items: [annotation] })).toBe(base);
-    t.store.setLink(page.id, { lectureId: t.lecture.id, slideId: null, confidence: 1, confirmed: true });
-    expect(t.jobs.originalHash(t.store.page(page.id))).not.toBe(base);
-  });
-
-  it('files notebooks into a student’s own folders without leaking across students or courses', async () => {
-    const t = await seeded();
-    const post = (url: string, s: string, payload: object, course = 'comp2211') => t.app.inject({ method: 'POST', url, headers: t.as(s, course), payload });
-    const patch = (url: string, s: string, payload: object, course = 'comp2211') => t.app.inject({ method: 'PATCH', url, headers: t.as(s, course), payload });
-    const notebooks = async (s: string, course = 'comp2211') => (await t.app.inject({ url: '/api/notebooks', headers: t.as(s, course) })).json();
-
-    const exam = (await post('/api/folders', 'thomas', { name: '  Midterm  ' })).json();
-    expect(exam).toMatchObject({ name: 'Midterm', parentId: null, courseId: 'comp2211' });
-    expect(exam.studentId).toBeUndefined();
-    const week = (await post('/api/folders', 'thomas', { name: 'Week 3', parentId: exam.id })).json();
-    expect(week.parentId).toBe(exam.id);
-    expect((await post('/api/folders', 'thomas', { name: ' ' })).statusCode).toBe(400);
-
-    // a new notebook can start inside a folder; an existing one can be moved and moved back out
-    const nb = (await post('/api/notebooks', 'thomas', { title: 'Revision', folderId: week.id })).json();
-    expect((await notebooks('thomas')).find((n: any) => n.id === nb.id).folderId).toBe(week.id);
-    const lecNb = (await t.open('thomas')).notebook;
-    expect((await patch(`/api/notebooks/${lecNb.id}`, 'thomas', { folderId: exam.id })).statusCode).toBe(200);
-    let mine = await notebooks('thomas');
-    expect(mine.find((n: any) => n.id === lecNb.id)).toMatchObject({ folderId: exam.id, written: 0 });
-    expect((await patch(`/api/folders/${week.id}`, 'thomas', { name: 'Week 3 · KNN' })).json().name).toBe('Week 3 · KNN');
-
-    // other students can neither see nor use my folders (they have the two a course starts with)
-    expect((await t.app.inject({ url: '/api/folders', headers: t.as('alex') })).json().map((f: any) => f.name).sort()).toEqual(['Lectures', 'Quizzes']);
-    expect((await patch(`/api/folders/${exam.id}`, 'alex', { name: 'x' })).statusCode).toBe(404);
-    expect((await t.app.inject({ method: 'DELETE', url: `/api/folders/${exam.id}`, headers: t.as('alex') })).statusCode).toBe(404);
-    expect((await post('/api/folders', 'alex', { name: 'x', parentId: exam.id })).statusCode).toBe(404);
-    const alexNb = (await post('/api/notebooks', 'alex', { title: 'A' })).json();
-    expect((await patch(`/api/notebooks/${alexNb.id}`, 'alex', { folderId: exam.id })).statusCode).toBe(404);
-    expect((await patch(`/api/notebooks/${nb.id}`, 'alex', { folderId: null })).statusCode).toBe(403);
-
-    // notes stay in their own course
-    await post('/api/courses', 'thomas', { code: 'COMP3311', name: 'Databases' });
-    const dbFolder = (await post('/api/folders', 'thomas', { name: 'DB' }, 'comp3311')).json();
-    expect(
-      (await t.app.inject({ url: '/api/folders', headers: t.as('thomas', 'comp3311') })).json().map((f: any) => f.name).sort(),
-    ).toEqual(['DB', 'Lectures', 'Quizzes']);
-    expect((await t.app.inject({ url: '/api/folders', headers: t.as('thomas', 'comp3311') })).json().some((f: any) => f.id === dbFolder.id)).toBe(true);
-    expect((await patch(`/api/notebooks/${nb.id}`, 'thomas', { folderId: dbFolder.id })).statusCode).toBe(400);
-    expect((await post('/api/notebooks', 'thomas', { title: 'x', folderId: exam.id }, 'comp3311')).statusCode).toBe(400);
-    expect((await post('/api/folders', 'thomas', { name: 'x', parentId: exam.id }, 'comp3311')).statusCode).toBe(400);
-
-    // deleting a folder keeps everything: its notebooks and subfolders move up one level
-    expect((await t.app.inject({ method: 'DELETE', url: `/api/folders/${exam.id}`, headers: t.as('thomas') })).statusCode).toBe(200);
-    const folders = (await t.app.inject({ url: '/api/folders', headers: t.as('thomas') })).json();
-    expect(folders.find((f: any) => f.id === week.id)).toEqual({ id: week.id, courseId: 'comp2211', parentId: null, name: 'Week 3 · KNN' });
-    expect(folders.map((f: any) => f.name).sort()).toEqual(['Lectures', 'Quizzes', 'Week 3 · KNN']);
-    mine = await notebooks('thomas');
-    expect(mine.find((n: any) => n.id === lecNb.id).folderId).toBeNull();
-    expect(mine.find((n: any) => n.id === nb.id).folderId).toBe(week.id);
-
-    // leaving the course closes its folders too
-    await t.app.inject({ method: 'DELETE', url: '/api/courses/comp2211/enroll', headers: t.as('thomas') });
-    expect((await t.app.inject({ url: '/api/folders', headers: t.as('thomas') })).statusCode).toBe(403);
-    expect((await patch(`/api/folders/${week.id}`, 'thomas', { name: 'x' })).statusCode).toBe(403);
-  });
-
-  it('starts every course with two ordinary folders and keeps decks shared files', async () => {
-    const t = await seeded();
-    const files = async (s: string) => (await t.app.inject({ url: '/api/courses/comp2211/files', headers: t.as(s) })).json();
-    const patch = (url: string, s: string, payload: object) => t.app.inject({ method: 'PATCH', url, headers: t.as(s), payload });
-
-    // a course starts with Lectures and Quizzes, seeded once per student per course
-    const before = await files('thomas');
-    expect(before.folders.map((f: any) => f.name).sort()).toEqual(['Lectures', 'Quizzes']);
-    expect(before.folders.every((f: any) => f.parentId === null)).toBe(true);
-    expect(before.lecturesFolderId).toBe(before.folders.find((f: any) => f.name === 'Lectures').id);
-    // the seeded folder is ordinary: renaming it keeps lecture decks filed in it
-    const lecturesFolder = before.lecturesFolderId;
-    await patch(`/api/folders/${lecturesFolder}`, 'thomas', { name: 'Course slides' });
-    const renamed = await files('thomas');
-    expect(renamed.lecturesFolderId).toBe(lecturesFolder);
-    expect(renamed.folders.find((f: any) => f.id === lecturesFolder).name).toBe('Course slides');
-    // ...and deleting it does not bring it back
-    await t.app.inject({ method: 'DELETE', url: `/api/folders/${lecturesFolder}`, headers: t.as('thomas') });
-    const gone = await files('thomas');
-    expect(gone.lecturesFolderId).toBeNull();
-    expect(gone.folders.map((f: any) => f.name)).toEqual(['Quizzes']);
-
-    // a deck is one shared lecture record: no per-student notebook until the student opens it
-    expect(gone.decks).toHaveLength(1);
-    expect(gone.decks[0]).toMatchObject({ lectureId: t.lecture.id, number: 3, notebookId: null, written: 0, folderId: null });
-    expect(gone.notes).toEqual([]);
-
-    // filing a deck makes the student's own copy without copying the slides
-    const exam = (await t.app.inject({ method: 'POST', url: '/api/folders', headers: t.as('thomas'), payload: { name: 'Exam' } })).json();
-    const filed = await patch(`/api/lectures/${t.lecture.id}`, 'thomas', { folderId: exam.id });
-    expect(filed.statusCode).toBe(200);
-    const filedFiles = await files('thomas');
-    expect(filedFiles.decks[0]).toMatchObject({ notebookId: filed.json().id, folderId: exam.id, pageCount: 3 });
-    // the copy holds no pages, and lecture notebooks are the decks, not extra files
-    expect(t.store.pages(filed.json().id)).toHaveLength(0);
-    expect(filedFiles.notes).toEqual([]);
-    expect((await t.app.inject({ url: '/api/notebooks', headers: t.as('thomas') })).json().filter((n: any) => n.kind === 'lecture')).toHaveLength(1);
-
-    // opening it builds the pages once, and does not add a second file
-    await t.open('thomas');
-    const opened = await files('thomas');
-    expect(opened.decks).toHaveLength(1);
-    expect(opened.decks[0]).toMatchObject({ notebookId: filed.json().id, folderId: exam.id });
-    expect(t.store.pages(filed.json().id)).toHaveLength(3);
-    // a rename through the deck route keeps the same copy
-    await patch(`/api/lectures/${t.lecture.id}`, 'thomas', { title: 'L3 · Bayes' });
-    expect(t.store.notebook(filed.json().id).title).toBe('L3 · Bayes');
-
-    // another student's deck is still untouched and unfiled in their own tree
-    const alex = await files('alex');
-    expect(alex.decks[0]).toMatchObject({ notebookId: null, written: 0 });
-    expect(t.store.pages(filed.json().id)).toHaveLength(3);
+    const rows = t.store.pageFragments(page.id).filter((f) => f.text === original.text);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].shared).toBe(false);
+    expect(t.store.supersededBy(rows[0].id)).toBeTruthy();
+    expect(rev).toBeGreaterThan(page.revision);
   });
 
   it('rejects cross-site writes', async () => {
