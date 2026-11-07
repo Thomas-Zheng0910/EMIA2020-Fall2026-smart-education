@@ -35,10 +35,18 @@ This repository is the working prototype for **EMIA2020 Fall 2026 — Smart Educ
 | **A DeepSeek API key**  | Optional to start the app, required for digests, transcription, suggestions, Ask and quizzes. The official endpoint and `deepseek-flash` are the defaults. |
 | **Playwright Chromium** | Optional, only for the browser tests. `npx playwright install chromium` if the default browser is missing.                                                 |
 
+Check the runtime with `node -v`. With nvm: `nvm install 24 && nvm use 24`.
+
 On Debian/Ubuntu:
 
 ```bash
 sudo apt-get install poppler-utils python3
+```
+
+On macOS:
+
+```bash
+brew install poppler python3
 ```
 
 The course material is **not** in this repository. The COMP2211 PDFs are large and are not ours to redistribute. You can seed with any folder of lecture PDFs you are allowed to use, or create a course in the app as the Professor and upload decks there.
@@ -68,6 +76,8 @@ If port 4310 is already taken (for example by the hosted demo), run the isolated
 npm run dev:local        # client :5174, API :4312
 ```
 
+> **No lecture PDFs?** Skip the seed. Start the app, switch to **Professor**, and create a course with any PDF you are allowed to use. The seeded COMP2211 course is a convenience, not a requirement.
+
 ### Seed the demo course
 
 The seed imports lecture PDFs, renders their slides, asks the model to digest each slide, and imports a handwritten notebook for Alex. It needs a folder (or a Flexcil-style `.zip`) containing PDFs named like this:
@@ -92,7 +102,7 @@ npm run seed -- /path/to/pdfs --code COMP3311 --name "Database Management System
 
 Seeding is slow on purpose: every slide is a model call. The seed prints `digested X/Y slides` every 15 seconds; a full 13-lecture, 636-slide COMP2211 seed takes roughly 25 minutes on the live model. Without `LLM_API_KEY`, slides are imported but not digested, and AI features return a clear "AI not configured" error.
 
-You do not have to seed to look around. Start the app, switch to **Professor** in the top-right menu, create a course, and upload PDFs from the course page. A freshly seeded database starts with suggestions based on the official slides only; the knowledge base fills in after someone leaves a notebook (or after the 10-minute sweep).
+A seeded database starts with suggestions based on the official slides only; the knowledge base fills in after someone leaves a notebook (or after the 10-minute sweep).
 
 ### Reset the database
 
