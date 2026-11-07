@@ -13,7 +13,7 @@ playwright-report/
 
 # Course material and design exports are local-only (large, and not ours to redistribute).
 *.zip
-"Collaborative_Course_Notebook_Concept (1).docx"
+Collaborative_Course_Notebook_Concept*.docx
 
 # OS/editor noise.
 .DS_Store
