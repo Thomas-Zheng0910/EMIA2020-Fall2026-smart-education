@@ -1,6 +1,6 @@
 import type { Page } from '../../shared/types';
 
-export type ToolName = 'pen' | 'highlighter' | 'eraser' | 'lasso' | 'text';
+export type ToolName = 'pen' | 'highlighter' | 'eraser' | 'lasso' | 'text' | 'memo';
 export type ToolState = {
   tool: ToolName;
   color: string;

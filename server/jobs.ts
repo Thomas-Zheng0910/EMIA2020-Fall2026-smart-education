@@ -121,6 +121,7 @@ export class Jobs {
   private timers = new Map<string, NodeJS.Timeout>();
   private pendingIndex = new Set<string>();
   private merging = new Set<string>();
+  private mergeAgain = new Set<string>();
   /** Pages whose gaps are stale: re-read them even though the ink has not changed. */
   private regap = new Set<string>();
   private sweepTimer: NodeJS.Timeout | null = null;
@@ -231,7 +232,11 @@ export class Jobs {
     // Explicit merges (a notebook closing, a report) run even when background work is off;
     // `background` only governs the sweeps that run without being asked.
     if ((!this.opts.background && !opts.force) || !this.ai.configured) return;
-    if (this.merging.has(slideId)) return;
+    if (this.merging.has(slideId)) {
+      // A report/invite/delete wants this slide rebuilt; run it again after the current call.
+      if (opts.force) this.mergeAgain.add(slideId);
+      return;
+    }
     const frags = this.store.slideFragments(slideId);
     const hashNow = hash(frags.map((f) => `${f.id}:${f.text}`).join('|'));
     if (this.store.slideMergeHash(slideId) === hashNow) return;
@@ -241,6 +246,7 @@ export class Jobs {
         await this.runMerge(slideId, hashNow);
       } finally {
         this.merging.delete(slideId);
+        if (this.mergeAgain.delete(slideId)) this.mergeSlide(slideId, { force: true });
       }
     });
   }
@@ -286,6 +292,11 @@ TASK:
 6. When a fragment contradicts the official slide, give a one-sentence explanation of the mismatch in disputeExplanation.`,
       Merged,
     );
+    // The notes may have changed while the model was answering (a note became a group note, or
+    // another classmate edited it). Never write a merge against a stale source set.
+    const still = this.store.slideFragments(slideId);
+    const sig = (list: typeof frags) => list.map((f) => `${f.id}:${f.text}`).join('|');
+    if (sig(still) !== sig(frags)) return;
     const byId = new Map(frags.map((f) => [f.id, f]));
     const keep = new Set<string>();
     for (const e of out.entries) {
@@ -373,6 +384,22 @@ TASK: Name 5-15 topics that cover this lecture, each spanning one or more slides
   // ---------------- automatic page indexing
   scheduleIndex(pageId: string, delay = this.opts.indexDelayMs) {
     if (!this.opts.background) return;
+    try {
+      const p = this.store.page(pageId);
+      // Group notes are a private shared workspace; the professor's own notes are authority, not peer
+      // evidence; a received copy only contributes its owner's own slide-anchored additions.
+      if (p.notebookKind === 'group' || this.store.isInstructor(p.notebookStudentId, p.courseId)) {
+        this.store.retirePageFragments(pageId);
+        this.store.setIndex(pageId, 'indexed');
+        return;
+      }
+      if (p.notebookKind === 'shared' && p.kind !== 'slide' && !(p.link.confirmed && p.link.slideId)) {
+        this.store.setIndex(pageId, 'indexed');
+        return;
+      }
+    } catch {
+      return;
+    }
     this.store.setIndex(pageId, 'queued');
     clearTimeout(this.timers.get(pageId));
     this.timers.set(
@@ -392,10 +419,14 @@ TASK: Name 5-15 topics that cover this lecture, each spanning one or more slides
     );
   }
 
-  originalHash(p: Page & { image?: string | null }) {
-    // A confirmed whole-lecture link has no slide id, so include the lecture too. Guessed links stay
-    // out of the hash: annotation-only edits must not trigger another model call.
-    return hash(JSON.stringify([p.image, p.strokes, p.items.filter((i) => i.type !== 'annotation'), p.link.confirmed ? [p.link.lectureId, p.link.slideId] : null]));
+  originalHash(p: Page & { image?: string | null; notebookKind?: string }) {
+    // A received copy only owns the objects it added; the shared layer must not make the hash move
+    // or be attributed to the recipient. A confirmed whole-lecture link has no slide id, so include
+    // the lecture too; guessed links stay out so annotation-only edits cost no model call.
+    const own = (o: { origin?: string }) => p.notebookKind !== 'shared' || o.origin !== 'shared';
+    const strokes = p.strokes.filter(own);
+    const items = p.items.filter((i) => i.type !== 'annotation' && own(i));
+    return hash(JSON.stringify([p.image, strokes, items, p.link.confirmed ? [p.link.lectureId, p.link.slideId] : null]));
   }
 
   async indexPage(pageId: string) {
@@ -406,8 +437,21 @@ TASK: Name 5-15 topics that cover this lecture, each spanning one or more slides
       return;
     }
     const rev = page.revision;
+    // The bank is for individual student knowledge. Group notes are a private workspace, a
+    // professor's own notes are authority rather than peer evidence, and a received copy only
+    // contributes the recipient's own additions on slide-anchored pages.
+    if (page.notebookKind === 'group' || this.store.isInstructor(page.notebookStudentId, page.courseId)) {
+      this.store.retirePageFragments(pageId);
+      this.store.setIndex(pageId, 'indexed');
+      return;
+    }
+    const ownOnly = page.notebookKind === 'shared';
+    if (ownOnly && page.kind !== 'slide' && !(page.link.confirmed && page.link.slideId)) {
+      this.store.setIndex(pageId, 'indexed');
+      return;
+    }
     const contentHash = this.originalHash(page);
-    const original = page.kind === 'pdf' || hasOriginalContent(page);
+    const original = (page.kind === 'pdf' && !ownOnly) || hasOriginalContent(page, ownOnly);
     if (!original) {
       this.store.replaceFragments(pageId, rev, contentHash, []);
       return;
@@ -424,7 +468,11 @@ TASK: Name 5-15 topics that cover this lecture, each spanning one or more slides
     if (!this.ai.configured) return this.store.setIndex(pageId, 'failed', 'AI is not configured, so notes cannot be shared yet.');
     this.store.setIndex(pageId, 'indexing');
     try {
-      const png = await renderPage(page, this.store, this.dataDir, { width: 1280 });
+      const png = await renderPage(page, this.store, this.dataDir, { width: 1280, ownOnly });
+      const ownStrokes = ownOnly ? page.strokes.filter((s) => s.origin !== 'shared') : page.strokes;
+      // Handwriting is much easier to read without the slide, the ruling, or a shared layer behind it.
+      // The ink-only image is a second view for the model, not a replacement for the page context.
+      const inkPng = ownStrokes.length ? await renderPage(page, this.store, this.dataDir, { width: 1600, ownOnly, inkOnly: true }) : null;
       const owner = page.notebookStudentId;
       const fixedSlide = page.kind === 'slide' && page.slideId ? this.store.slide(page.slideId) : null;
       const confirmedSlide = !fixedSlide && page.link.confirmed && page.link.slideId ? this.store.slide(page.link.slideId) : null;
@@ -443,7 +491,7 @@ ${outline.map((o) => `L${o.lectureNumber}.${o.page}: ${o.title.slice(0, 80)}`).j
 Set "link" to the main lecture/slide of the page. Pages often cover several slides: for EACH fragment also set its own lectureNumber, slide and linkConfidence (how sure you are that this fragment is about that slide). Use nulls and low confidence when unsure.`;
       }
       const out = await this.ai.json(
-        `The image is one page from a student's notebook in a university course. ${page.kind === 'slide' ? 'The page background is the official lecture slide; the student wrote/typed on top of it.' : page.kind === 'pdf' ? 'This page is from the student\'s own imported notebook; it may contain pasted slide screenshots and handwriting.' : 'This is a blank notebook page with student notes.'}
+        `The first image is one page from a student's notebook in a university course. ${page.kind === 'slide' ? 'The page background is the official lecture slide; the student wrote/typed on top of it.' : page.kind === 'pdf' ? 'This page is from the student\'s own imported notebook; it may contain pasted slide screenshots and handwriting.' : 'This is a blank notebook page with student notes.'}${ownOnly ? ' This is a copy received from a classmate; only the student\'s own additions are shown. Do not describe or infer the original shared note.' : ''}${inkPng ? ' The second image is the student\'s ink alone on white paper; use it to read the handwriting, and use the first image for context.' : ''}
 ${context}
 
 Extract the course knowledge THIS STUDENT recorded that could help a classmate who missed it: explanations, intermediate derivation steps, worked examples, intuitions, things the lecturer said aloud, and open questions. Skip anything that just repeats what the official slide already says (classmates have the slide), text inside pasted slide screenshots, decorations and doodles.
@@ -454,8 +502,18 @@ For each fragment: transcribe faithfully (math as LaTeX, mark unreadable symbols
           .map((e) => `[E${e.id}] ${e.title}: ${e.summary.replace(/\s+/g, ' ')}`)
           .join('\n') || '(none yet)'}` : ''}`,
         Indexed,
-        [{ png }],
+        [{ png }, ...(inkPng ? [{ png: inkPng, label: "The student's ink alone, without the slide, grid or shared layer." }] : [])],
       );
+      // The notebook may have become a group note or changed hands while the model was answering.
+      try {
+        if (this.store.notebook(page.notebookId).kind === 'group' || this.store.isInstructor(page.notebookStudentId, page.courseId)) {
+          this.store.retirePageFragments(pageId);
+          this.store.setIndex(pageId, 'indexed');
+          return;
+        }
+      } catch {
+        return;
+      }
       const slideCache = new Map<string, ReturnType<Store['slides']>>();
       const resolve = (lectureNumber: number | null | undefined, slideNo: number | null | undefined) => {
         const lec = lectureNumber != null ? lectures.find((l) => l.number === lectureNumber) : undefined;

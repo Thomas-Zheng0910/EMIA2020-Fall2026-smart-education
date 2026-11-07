@@ -2,6 +2,8 @@
 
 **Status:** Agreed with user. Redesigns the Classmates/Explain panel and implements the concept doc's "course knowledge base". Quiz me becomes a future plan.
 
+> **Nov 5 update (supersedes the panel section):** the side panel is now **Ask | Suggestions**. Ask is a persisted conversation with sessions and history; suggestions are their own tab with This page / Whole notebook scopes, and adding from the browser does not move the page being read. `AGENTS.md` and `docs/HANDOFF.md` are current.
+
 Supersedes for this pass: the Library v2 section of the 2026-11-02 design, and the "sharing must stay reversible" rule in `AGENTS.md` (see "Reversed decision: author stop-sharing" below).
 
 ## User decisions (4 Nov)

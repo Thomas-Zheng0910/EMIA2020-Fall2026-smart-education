@@ -2,7 +2,7 @@ import { AppError, Store } from './db';
 import { ModelGateway } from './ai';
 import { cropPng, renderPage } from './render';
 import { fillGap } from './study';
-import type { Citation, OwnNote, PageSuggestions, Suggestion } from '../shared/types';
+import type { Citation, NotebookSuggestion, NotebookSuggestions, OwnNote, PageSuggestions, Suggestion } from '../shared/types';
 
 /**
  * Turns a page's stored gaps into the cards a student sees.
@@ -13,6 +13,8 @@ import type { Citation, OwnNote, PageSuggestions, Suggestion } from '../shared/t
  */
 export function pageSuggestions(store: Store, pageId: string, viewer: string): PageSuggestions {
   const page = store.page(pageId);
+  // A group note is a private shared workspace; AI suggestions stay in individual notes.
+  if (page.notebookKind === 'group') return { pageId, gaps: [], own: [], unlinked: false };
   const slideId = page.slideId ?? page.link.slideId;
   const dismissed = store.dismissedGaps(viewer);
   const gaps = slideId ? store.gaps(pageId).filter((g) => !dismissed.has(g.id)) : [];
@@ -33,16 +35,18 @@ export function pageSuggestions(store: Store, pageId: string, viewer: string): P
   const cards: Suggestion[] = [];
   for (const g of gaps) {
     const entry = entries.find((e) => g.entryIds.includes(e.id)) ?? null;
-    if (entry) {
-      const count = store.entrySourceCount(entry.id);
-      const source = store.entrySources(entry.id).find((f) => f.studentId !== viewer) ?? null;
+    const sourceFragments = entry ? store.entrySources(entry.id).filter((f) => f.studentId !== viewer) : [];
+    // Count distinct classmates, not notes: one classmate's two notes are still one source.
+    const count = new Set(sourceFragments.map((f) => f.studentId)).size;
+    if (entry && count > 0) {
+      const source = sourceFragments[0] ?? null;
       cards.push({
         id: g.id,
         pageId,
         bbox: g.bbox,
         missing: g.missing,
         source: 'peer',
-        sourceLine: count === 1 ? "From 1 classmate's note" : `From ${count} classmates' notes`,
+        sourceLine: count <= 0 ? 'From a classmate’s note' : count === 1 ? "From 1 classmate's note" : `From ${count} classmates' notes`,
         title: entry.title,
         body: entry.summary,
         citations: [
@@ -90,12 +94,43 @@ export function pageSuggestions(store: Store, pageId: string, viewer: string): P
     });
   }
 
-  return { pageId, gaps: cards, own: ownNotes(store, pageId, slideId), unlinked: !slideId };
+  return { pageId, gaps: cards, own: ownNotes(store, pageId, slideId, viewer), unlinked: !slideId };
+}
+
+/**
+ * Every suggestion in a notebook, grouped by page in the notebook's own order.
+ *
+ * A student should not have to scroll a 99-slide deck to find out what is waiting for them. This
+ * reads each page the same way the inline ghost does — same precedence, same dismissals — so the
+ * browser and the page can never disagree. No model calls: it only formats what is already stored.
+ */
+export function notebookSuggestions(store: Store, notebookId: string, viewer: string): NotebookSuggestions {
+  const pages = store.pages(notebookId);
+  const dismissed = store.dismissedGaps(viewer);
+  const groups: NotebookSuggestions['groups'] = [];
+  let total = 0;
+  pages.forEach((page, i) => {
+    // Cheap check first: a page with no gaps at all costs nothing here.
+    if (!store.gaps(page.id).some((g) => !dismissed.has(g.id))) return;
+    // The author's own answered gaps are settled: a note on the page is the record, as inline.
+    const answered = new Set(page.items.filter((it) => it.type === 'annotation' && it.gapId).map((it) => (it as { gapId?: string }).gapId));
+    const { gaps } = pageSuggestions(store, page.id, viewer);
+    const label = page.kind === 'slide' ? `Slide ${page.position}` : `Page ${i + 1}`;
+    const items: NotebookSuggestion[] = gaps
+      .filter((g) => !answered.has(g.id))
+      .map((g) => ({ ...g, pageNumber: i + 1, pageLabel: label, thumb: `/api/pages/${page.id}/render.png?w=240` }));
+    if (!items.length) return;
+    total += items.length;
+    groups.push({ pageId: page.id, pageNumber: i + 1, pageLabel: label, thumb: `/api/pages/${page.id}/render.png?w=240`, items });
+  });
+  return { notebookId, groups, total };
 }
 
 /** The author's view of their own page: shared, private (with the AI's reason), or disputed. */
-function ownNotes(store: Store, pageId: string, slideId: string | null): OwnNote[] {
-  const own = store.pageFragments(pageId);
+function ownNotes(store: Store, pageId: string, slideId: string | null, viewer: string): OwnNote[] {
+  // The author's private transcription and AI feedback stay with the author, even when the page
+  // is now a group note.
+  const own = store.pageFragments(pageId).filter((f) => f.studentId === viewer);
   const entries = new Map((slideId ? store.entries(slideId) : []).map((e) => [e.id, e]));
   return own.map((f) => {
     const entry = f.entryId ? entries.get(f.entryId) : null;

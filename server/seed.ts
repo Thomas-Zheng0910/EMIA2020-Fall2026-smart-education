@@ -11,10 +11,13 @@ export const COURSE = {
   name: 'Exploring Artificial Intelligence',
   description: 'HKUST · Python for AI, Naive Bayes, KNN, K-means, perceptrons, MLPs, image processing, CNNs, minimax and AI ethics.',
 };
+export const PROFESSOR_ID = 'professor';
 export const STUDENTS: Student[] = [
-  { id: 'thomas', name: 'Thomas', initials: 'T', color: '#2f6fed' },
-  { id: 'alex', name: 'Alex', initials: 'A', color: '#d9480f' },
-  { id: 'priya', name: 'Priya', initials: 'P', color: '#2b8a3e' },
+  { id: 'thomas', name: 'Thomas', initials: 'T', color: '#2f6fed', role: 'student' },
+  { id: 'alex', name: 'Alex', initials: 'A', color: '#d9480f', role: 'student' },
+  { id: 'priya', name: 'Priya', initials: 'P', color: '#2b8a3e', role: 'student' },
+  // Demo identity only: no password, no authentication. The professor can create courses and go live.
+  { id: PROFESSOR_ID, name: 'Professor', initials: 'P', color: '#6b4e8e', role: 'professor' },
 ];
 
 /** Display titles for the COMP2211 Flexcil export (file names are lossy). */
@@ -38,7 +41,13 @@ export const TITLES: Record<number, string> = {
 export function ensureStudents(store: Store) {
   for (const s of STUDENTS) store.upsertStudent(s);
   const enrolled = store.db.prepare('SELECT COUNT(*) n FROM enrollments').get() as { n: number };
-  if (!enrolled.n) for (const c of store.courses()) for (const s of STUDENTS) store.enroll(s.id, c.id);
+  if (!enrolled.n) for (const c of store.courses()) for (const s of STUDENTS.filter((x) => x.role === 'student')) store.enroll(s.id, c.id);
+  // Existing databases get the professor on every course, as the instructor, without changing
+  // students' existing enrollments. A professor who left/rejoined as a student is repaired here.
+  for (const c of store.courses()) {
+    if (!store.isEnrolled(PROFESSOR_ID, c.id)) store.enroll(PROFESSOR_ID, c.id, 'instructor');
+    else store.ensureInstructorForCourse(PROFESSOR_ID, c.id);
+  }
   // Every existing enrollment gets the tree a course starts with (idempotent, additive).
   for (const s of STUDENTS) for (const cid of store.enrolledCourseIds(s.id)) store.seedCourseFolders(cid, s.id);
 }
@@ -75,7 +84,8 @@ async function main() {
   const store = new Store(join(dataDir, 'notebook.sqlite'));
   ensureStudents(store);
   store.upsertCourse(course);
-  for (const s of STUDENTS) {
+  store.enroll(PROFESSOR_ID, course.id, 'instructor');
+  for (const s of STUDENTS.filter((x) => x.role === 'student')) {
     store.enroll(s.id, course.id);
   }
   const ai = new ModelGateway(envConfig());

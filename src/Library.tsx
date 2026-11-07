@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import type { CourseFiles, Deck, Folder, Lecture, Notebook } from '../shared/types';
+import { FolderPlus } from 'lucide-react';
+import type { CourseFiles, Deck, Folder, Lecture, Notebook, PaperKind } from '../shared/types';
 import type { LibView } from './App';
 import { Dialog, ago } from './Home';
+import { ShareDialog } from './ShareDialog';
+import { PAPERS, paperName } from './paper';
 import { api, upload } from './api';
 import { useBoot } from './boot';
 import { useEscape } from './ui';
@@ -17,7 +20,7 @@ type FileRef = { notebookId?: string; deck?: Deck };
 
 const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
 const isPdf = (f: File) => f.type === 'application/pdf' || /\.pdf$/i.test(f.name);
-const CHIP_COLORS = ['#2f6fed', '#0c8599', '#7048e8', '#e8590c', '#2b8a3e', '#c2255c', '#1971c2', '#5f3dc4'];
+const CHIP_COLORS = ['#2f5d7c', '#0c6b6b', '#5f4b8b', '#b05a2a', '#3b7a57', '#a8435f', '#2b5d8a', '#6b4e8e'];
 const chipColor = (code: string) => CHIP_COLORS[[...code].reduce((h, ch) => (h * 31 + ch.charCodeAt(0)) >>> 0, 7) % CHIP_COLORS.length];
 
 /** A course is not a folder: it is something you join, and it decides which classmates your notes connect with. */
@@ -88,6 +91,7 @@ export function Library({
   const [newNb, setNewNb] = useState<{ folderId: string | null } | null>(null);
   const [hint, setHint] = useState<FileTarget | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [sharing, setSharing] = useState<Notebook | null>(null);
   const [slots, setSlots] = useState<{ toggle: HTMLElement | null; crumbs: HTMLElement | null }>({ toggle: null, crumbs: null });
 
   useEffect(() => setSlots({ toggle: document.getElementById('lib-toggle-slot'), crumbs: document.getElementById('lib-crumb-slot') }), []);
@@ -144,10 +148,12 @@ export function Library({
   /** Everything on one page of the tree: the decks, then the student's own files. */
   const filesIn = (f: string | null) => pair(decksIn(f), notesIn(f));
   /** "My notes" is a filter, not a folder: files with the student's ink or text. */
-  const writtenFiles = pair(decks.filter((d) => d.written > 0), notes.filter(written));
+  // A group note is a shared workspace from the moment it is created; it belongs in My notes even
+  // before anyone writes on it. A received copy with only the sender's ink also counts as written.
+  const writtenFiles = pair(decks.filter((d) => d.written > 0), notes.filter((n) => n.kind === 'group' || written(n)));
   const allFiles = pair(decks, notes);
   /** A folder's line in the sidebar: how much is in it, subfolders included. */
-  const countIn = (f: string) => subfolders(f).length + notesIn(f).length + decksIn(f).length;
+  const countIn = (f: string): number => subfolders(f).reduce((n, s) => n + countIn(s.id), 0) + notesIn(f).length + decksIn(f).length;
   const expand = (...keys: (string | null)[]) => setExpanded((s) => new Set([...s, ...(keys.filter(Boolean) as string[])]));
   const toggle = (key: string) =>
     setExpanded((s) => {
@@ -291,6 +297,27 @@ export function Library({
       items: rows.map((r) => ({ label: `${'\u2003'.repeat(r.depth)}${r.id === here ? '✓ ' : ''}${r.name}`, disabled: r.id === here, run: () => put(r.id) })),
     });
   };
+  const paperMenu = (n: Notebook, x: number, y: number) =>
+    setMenu({
+      x,
+      y,
+      title: 'Paper for new pages',
+      items: PAPERS.map((p) => ({
+        label: `${n.paper === p.kind ? '✓ ' : ''}${p.name} — ${p.use.toLowerCase()}`,
+        disabled: n.paper === p.kind,
+        run: () => setPaper(n.id, p.kind),
+      })),
+    });
+  const setPaper = async (id: string, paper: PaperKind) => {
+    setFiles((c) => (c ? { ...c, notes: c.notes.map((n) => (n.id === id ? { ...n, paper } : n)) } : c));
+    try {
+      await api(`/api/notebooks/${id}/paper`, { method: 'PATCH', json: { paper } });
+      onToast(`New pages in this notebook will be ${paperName(paper).toLowerCase()}.`);
+    } catch (e) {
+      fail(e);
+      load();
+    }
+  };
   const openMenu = (el: HTMLElement, x: number, y: number) => {
     // An opened deck is a notebook in the tree, but its menu is the deck's: the slides are the course's.
     const deck = decks.find((d) => d.lectureId === (el.dataset.deck ?? deckByNotebook.get(el.dataset.note ?? '')?.lectureId));
@@ -315,8 +342,10 @@ export function Library({
         title: n.title,
         items: [
           { label: 'Open', run: () => onOpen(n.id) },
+          { label: n.kind === 'group' ? 'Share and members…' : 'Share…', run: () => setSharing(n) },
+          { label: 'Paper for new pages', keep: true, run: () => paperMenu(n, x, y) },
           { label: 'Move to…', keep: true, run: () => moveMenu({ notebookId: n.id }, x, y) },
-          { label: 'Delete notebook', danger: true, run: () => removeNotebook(n) },
+          ...(n.kind === 'group' && n.role !== 'owner' ? [] : [{ label: 'Delete notebook', danger: true, run: () => removeNotebook(n) }]),
         ],
       });
     }
@@ -360,16 +389,16 @@ export function Library({
       const f = t.slice(2) || null;
       // The course's own Lectures folder is where official decks live: a PDF dropped there becomes
       // slides for everyone, not a private notebook. Any other folder takes a personal notebook.
-      if (isLecturesFolder(f))
+      if (isLecturesFolder(f) && course.myRole === 'instructor')
         return { el: d, ok: true, label: `Add to ${course.code} / ${placeName(f)}`, hint: `Becomes lecture slides for everyone in ${course.code}`, accept: (files) => importFiles(files, { kind: 'lectures' }) };
-      return { el: d, ok: true, label: `Add to ${course.code} / ${placeName(f)}`, hint: 'Becomes a note you can write on', accept: (files) => importFiles(files, { kind: 'notes', folderId: f }) };
+      return { el: d, ok: true, label: `Add to ${course.code} / ${placeName(f)}`, hint: isLecturesFolder(f) ? 'Only the professor can add official slides; this becomes your own note' : 'Becomes a note you can write on', accept: (files) => importFiles(files, { kind: 'notes', folderId: f }) };
     }
     const c = el.closest<HTMLElement>('.lib-content');
     if (!c) return null;
     if (view === 'notes' || view === 'all') return { el: c, ok: false, label: 'Drop onto a folder', hint: 'Choose where the PDF belongs.' };
-    if (isLecturesFolder(fid))
+    if (isLecturesFolder(fid) && course.myRole === 'instructor')
       return { el: c, ok: true, label: `Add to ${course.code} / ${placeName(fid)}`, hint: `Becomes lecture slides for everyone in ${course.code}`, accept: (files) => importFiles(files, { kind: 'lectures' }) };
-    return { el: c, ok: true, label: `Add to ${course.code} / ${placeName(fid)}`, hint: 'Becomes a note you can write on', accept: (files) => importFiles(files, { kind: 'notes', folderId: fid }) };
+    return { el: c, ok: true, label: `Add to ${course.code} / ${placeName(fid)}`, hint: isLecturesFolder(fid) ? 'Only the professor can add official slides; this becomes your own note' : 'Becomes a note you can write on', accept: (files) => importFiles(files, { kind: 'notes', folderId: fid }) };
   }, setHint);
 
   const menuRef = useRef<HTMLDivElement>(null);
@@ -390,7 +419,8 @@ export function Library({
 
   if (!course) return null;
   const summary = courses.find((c) => c.id === course.id);
-  const classmates = Math.max(0, (summary?.memberCount ?? 1) - 1);
+  const instructor = (course.myRole ?? summary?.myRole) === 'instructor';
+  const classmates = Math.max(0, (summary?.memberCount ?? 1) - (instructor ? 0 : 1));
   const mine = courses.filter((c) => enrolled.includes(c.id)).sort((a, b) => a.code.localeCompare(b.code));
 
   // ---------- sidebar
@@ -521,7 +551,7 @@ export function Library({
                   nav({ course: c.id, view: 'course' });
                   expand(`course:${c.id}`);
                 }}
-                title={`${c.code} · ${plural(Math.max(0, c.memberCount - 1), 'classmate')}`}
+                title={`${c.code} · ${plural(Math.max(0, c.memberCount - (c.myRole === 'instructor' ? 0 : 1)), c.myRole === 'instructor' ? 'student' : 'classmate')}`}
                 data-drop={cur ? 'f:' : `x:${c.id}`}
               >
                 {cur ? (
@@ -564,10 +594,30 @@ export function Library({
     d.lastPageId ? `/api/pages/${d.lastPageId}/render.png?w=480` : d.pageCount > 0 ? `/api/assets/lectures/${d.lectureId}/${Math.min(2, d.pageCount)}.png` : null;
   const noteCard = (n: Notebook) => (
     <button key={n.id} className="doc-card" data-note={n.id} onClick={() => onOpen(n.id)} aria-label={n.title}>
-      <div className="doc-cover">{n.cover ? <img className="doc-page" src={n.cover} alt="" loading="lazy" draggable={false} /> : <div className="ruled-cover" />}</div>
+      <div className="doc-cover">
+        {n.cover ? (
+          <img className="doc-page" src={n.cover} alt="" loading="lazy" draggable={false} />
+        ) : (
+          <div className={`paper-cover paper-cover-${n.paper}`}>
+            {/* A new notebook shows the cover it was made with, not an empty white page. */}
+            <span className="paper-label">
+              <span className="paper-label-title">{n.title}</span>
+              <span className="paper-label-meta">{paperName(n.paper)} paper</span>
+            </span>
+          </div>
+        )}
+        {n.kind === 'group' && <span className="doc-badge group-badge">Group · {n.memberCount ?? 1}</span>}
+        {n.share && <span className="doc-badge share-badge">From {n.share.fromName}</span>}
+      </div>
       <div className="doc-meta">
-        <b>{n.title}</b>
-        <span>{`${plural(n.pageCount, 'page')} · ${ago(n.updatedAt)}`}</span>
+        {n.cover && <b>{n.title}</b>}
+        <span>
+          {n.kind === 'group'
+            ? `${plural(n.memberCount ?? 1, 'member')} · ${plural(n.pageCount, 'page')}`
+            : n.share
+              ? `${n.share.mode === 'pull' ? 'Pullable' : 'Snapshot'} · ${plural(n.pageCount, 'page')}`
+              : `${plural(n.pageCount, 'page')} · ${paperName(n.paper)} · ${ago(n.updatedAt)}`}
+        </span>
       </div>
     </button>
   );
@@ -619,6 +669,7 @@ export function Library({
   const folderTile = (f: Folder) => (
     <button key={f.id} className="folder-tile" data-ctx={`folder:${f.id}`} data-drop={`f:${f.id}`} onClick={() => goFolder(f.id)}>
       {Icon.bigFolder}
+      {f.id === files?.sharedFolderId && (files.unreadShares ?? 0) > 0 && <span className="folder-unread" title={`${files!.unreadShares} new shared ${files!.unreadShares === 1 ? 'note' : 'notes'}`} />}
       <span>
         <b>{f.name}</b>
         <span>{plural(countIn(f.id), 'item')}</span>
@@ -636,7 +687,15 @@ export function Library({
             <div className="lib-kicker">Course · {course.code}</div>
             <h1 className="lib-title">{title}</h1>
             {course.description && <p className="lib-desc">{course.description}</p>}
-            <div className="lib-peers">{classmates === 0 ? 'No classmates have joined yet' : `${plural(classmates, 'classmate')} in ${course.code}`}</div>
+            <div className="lib-peers">
+              {instructor
+                ? classmates === 0
+                  ? 'No students have joined yet'
+                  : `${plural(classmates, 'student')} in ${course.code}`
+                : classmates === 0
+                  ? 'No classmates have joined yet'
+                  : `${plural(classmates, 'classmate')} in ${course.code}`}
+            </div>
           </div>
         </div>
       ) : (
@@ -646,9 +705,14 @@ export function Library({
           <p className="lib-sub">{sub}</p>
         </div>
       )}
-      <button className="btn" onClick={() => startCreate(place)}>
-        New folder
-      </button>
+      <div className="lib-head-actions">
+        <button className="btn ghost" onClick={() => startCreate(place)}>
+          <FolderPlus size={15} aria-hidden /> New folder
+        </button>
+        <button className="btn primary" onClick={() => setNewNb({ folderId: place })}>
+          + New notebook
+        </button>
+      </div>
     </header>
   );
   /** Folders first, then the files in this place — the same order the tree uses. */
@@ -788,6 +852,7 @@ export function Library({
         </div>
       )}
       {newNb && <NewNotebook folderId={newNb.folderId} onClose={() => setNewNb(null)} onCreated={onOpen} onToast={onToast} />}
+      {sharing && <ShareDialog notebook={sharing} onClose={() => setSharing(null)} onToast={onToast} onChanged={load} onLeft={load} />}
     </div>
   );
 }
@@ -821,7 +886,7 @@ function NameInput({ initial, onDone }: { initial: string; onDone: (name: string
 
 function NewNotebook({ folderId, onClose, onCreated, onToast }: { folderId: string | null; onClose: () => void; onCreated: (id: string) => void; onToast: (m: string) => void }) {
   const [title, setTitle] = useState('');
-  const [paper, setPaper] = useState<'ruled' | 'blank' | 'grid'>('ruled');
+  const [paper, setPaper] = useState<PaperKind>('ruled');
   const create = async () => {
     try {
       onCreated((await api<{ id: string }>('/api/notebooks', { method: 'POST', json: { title: title.trim() || 'Untitled notebook', paper, folderId } })).id);
@@ -830,17 +895,30 @@ function NewNotebook({ folderId, onClose, onCreated, onToast }: { folderId: stri
     }
   };
   return (
-    <Dialog title="New notebook" onClose={onClose}>
+    <Dialog title="New notebook" onClose={onClose} wide>
       <input autoFocus className="input" placeholder="e.g. Revision — neural networks" value={title} onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && create()} />
-      <div className="paper-choice">
-        {(['ruled', 'blank', 'grid'] as const).map((p) => (
-          <button key={p} className={`paper-opt paper-${p} ${paper === p ? 'active' : ''}`} onClick={() => setPaper(p)}>
-            <span />
-            {p[0]!.toUpperCase() + p.slice(1)}
+      <div className="paper-choice" role="radiogroup" aria-label="Paper">
+        {PAPERS.map((p) => (
+          <button
+            key={p.kind}
+            role="radio"
+            aria-checked={paper === p.kind}
+            className={`paper-opt paper-${p.kind} ${paper === p.kind ? 'active' : ''}`}
+            onClick={() => setPaper(p.kind)}
+          >
+            <span className="paper-preview">
+              <span className="paper-sheet" style={{ width: 54, height: Math.round(54 * (p.height / p.width)) }}>
+                <span className="paper-rules" style={p.rule ? { backgroundSize: `100% ${(p.rule / p.height) * 100}%` } : undefined} />
+              </span>
+            </span>
+            <span className="paper-copy">
+              <b>{p.name}</b>
+              <em>{p.use}</em>
+            </span>
           </button>
         ))}
       </div>
-      <p className="muted small">Pages are linked to the right lecture automatically once you write.</p>
+      <p className="muted small">New pages use the same paper. You can change it per page from the page menu, or for the whole notebook in its menu.</p>
       <div className="modal-actions">
         <button className="btn ghost" onClick={onClose}>
           Cancel

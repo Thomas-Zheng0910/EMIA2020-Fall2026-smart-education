@@ -1,28 +1,31 @@
 :root {
-  --bg: #f6f6f3;
-  --canvas: #e9eaee;
-  --surface: #ffffff;
-  --line: #e4e4e0;
-  --line-strong: #d3d4d0;
-  --text: #1d1f23;
-  --muted: #6b6f76;
-  --accent: #2f6fed;
-  --accent-soft: #e9f0fe;
+  /* Warm paper, ink and a quiet slate blue: the page is the colour, the chrome stays out of its way. */
+  --bg: #f4f1e9;
+  --canvas: #e9e4d9;
+  --surface: #fffdf7;
+  --surface-2: #faf7ef;
+  --line: #e6dfd2;
+  --line-strong: #d4cbb9;
+  --text: #26231d;
+  --muted: #7a7468;
+  --accent: #2f5d7c;
+  --accent-soft: #e8eff4;
   --official: #2f6fed;
-  --peer: #d9480f;
-  --peer-soft: #fff1e8;
-  --ai: #7048e8;
-  --ai-soft: #f1edfd;
-  --ok: #2b8a3e;
-  --warn: #c92a2a;
-  --radius: 10px;
-  --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 4px 16px rgba(16, 24, 40, 0.06);
+  --peer: #c2571f;
+  --peer-soft: #fbeee4;
+  --ai: #6b4ea8;
+  --ai-soft: #f1ecf8;
+  --ok: #3b7a57;
+  --warn: #b33a3a;
+  --radius: 12px;
+  --shadow: 0 1px 2px rgba(60, 50, 30, 0.05), 0 6px 20px rgba(60, 50, 30, 0.06);
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   color: var(--text);
   background: var(--bg);
   font-size: 14px;
   line-height: 1.45;
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 * {
   box-sizing: border-box;
@@ -310,6 +313,27 @@ code {
   width: 100%;
   height: 100%;
   background: repeating-linear-gradient(#fff 0 17px, #dbe3ee 17px 18px);
+}
+/* A notebook with nothing written yet shows the paper it was made from, not a generic page. */
+.paper-cover {
+  width: 100%;
+  height: 100%;
+}
+.paper-cover-ruled {
+  background: repeating-linear-gradient(#fff 0 17px, #dbe3ee 17px 18px);
+}
+.paper-cover-memo {
+  background: #fffdf0;
+  background-image: repeating-linear-gradient(#fffdf0 0 15px, #eae4c4 15px 16px);
+  box-shadow: inset 0 -6px 0 #f4eecb;
+}
+.paper-cover-grid {
+  background-image: linear-gradient(#dfe5ec 1px, transparent 1px), linear-gradient(90deg, #dfe5ec 1px, transparent 1px);
+  background-size: 14px 14px;
+  background-color: #fff;
+}
+.paper-cover-blank {
+  background: #fff;
 }
 .nb-card:hover .nb-cover,
 .nb-card:focus-visible .nb-cover {
@@ -617,6 +641,12 @@ code {
   gap: 28px;
   overscroll-behavior: contain;
 }
+/* While a suggestion card is open the sheet slides left, so the card stands beside it
+   instead of on top of it, and neither one leaves the canvas. */
+.canvas-scroll.card-open {
+  align-items: flex-start;
+  padding-left: 24px;
+}
 .page-slot {
   flex: none;
   position: relative;
@@ -638,6 +668,10 @@ code {
   position: absolute;
   right: 0;
   top: 0;
+}
+/* The paper menu sits just left of the page menu, so the two never overlap. */
+.page-chrome > .page-menu[data-paper] {
+  right: 30px;
 }
 .page-chrome > .peer-pill {
   margin-left: auto;
@@ -787,6 +821,19 @@ code {
   background-image: linear-gradient(#e6eaef 1px, transparent 1px), linear-gradient(90deg, #e6eaef 1px, transparent 1px);
   background-size: 7px 7px;
 }
+.thumb-page.paper-memo {
+  background-color: #fffdf0;
+  background-image: repeating-linear-gradient(to bottom, transparent 0 6px, #ece5c2 6px 7px);
+  box-shadow: inset 0 -4px 0 #f4eecb, 0 0 0 1px var(--line-strong);
+}
+/* A memo sheet is a sticky note on the canvas: warm, square, and clearly smaller than a page. */
+.page-slot.is-memo .page-stage {
+  box-shadow: 0 1px 2px rgba(80, 70, 20, 0.16), 0 8px 22px rgba(80, 70, 20, 0.1);
+  border-radius: 4px;
+}
+.page-stage.paper-memo {
+  background: #fffdf0;
+}
 .page-bg {
   position: absolute;
   inset: 0;
@@ -872,35 +919,177 @@ code {
   overflow: hidden;
 }
 
-/* annotations added from suggestions */
+/* ---------- memos: the student's own sticky notes, stuck onto the page */
+.memo {
+  position: absolute;
+  z-index: 3;
+  border-radius: 3px 3px 3px 12px;
+  padding: 9px 10px;
+  box-shadow: 0 1px 1px rgba(60, 50, 10, 0.12), 0 4px 10px rgba(60, 50, 10, 0.1);
+  line-height: 1.35;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  /* A memo reads as paper, so it never gets UI chrome until it is being worked on. */
+  touch-action: none;
+}
+.memo::after {
+  /* The folded corner that makes it read as a note rather than a box. */
+  content: '';
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  border-width: 0 0 12px 12px;
+  border-style: solid;
+  border-color: transparent transparent rgba(0, 0, 0, 0.08) transparent;
+  border-radius: 0 0 3px 0;
+}
+.memo.tint-yellow {
+  background: #fff3b8;
+  color: #4a3f14;
+}
+.memo.tint-pink {
+  background: #ffdfe8;
+  color: #5a2536;
+}
+.memo.tint-blue {
+  background: #dbe9ff;
+  color: #21365c;
+}
+.memo.tint-green {
+  background: #dff3e2;
+  color: #1f4a2b;
+}
+.memo .memo-text {
+  min-height: 1.4em;
+  cursor: grab;
+}
+.memo.editing .memo-text {
+  cursor: text;
+}
+.memo-text {
+  border: 0;
+  outline: 0;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  padding: 0;
+  width: 100%;
+  resize: none;
+  overflow: hidden;
+  white-space: pre-wrap;
+  min-height: 2.8em;
+}
+.memo.interactive:not(.editing):hover {
+  outline: 1.5px dashed rgba(0, 0, 0, 0.22);
+  outline-offset: 2px;
+}
+.memo-tools {
+  position: absolute;
+  left: -1px;
+  bottom: -26px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 5px;
+  border-radius: 7px;
+  background: #fff;
+  box-shadow: 0 2px 8px rgba(16, 24, 40, 0.16);
+  z-index: 4;
+  /* Quiet: a page of memos shows paper, not toolbars. The strip appears on the one being worked on. */
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s;
+}
+.memo:hover > .memo-tools,
+.memo:focus-within > .memo-tools,
+.memo.editing > .memo-tools {
+  opacity: 1;
+  pointer-events: auto;
+}
+/* Touch has no hover: the strip stays, because tapping is how a memo is picked up. */
+@media (hover: none) {
+  .memo-tools {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+.memo-tint {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.14);
+  padding: 0;
+}
+.memo-tint.tint-yellow {
+  background: #fff3b8;
+}
+.memo-tint.tint-pink {
+  background: #ffdfe8;
+}
+.memo-tint.tint-blue {
+  background: #dbe9ff;
+}
+.memo-tint.tint-green {
+  background: #dff3e2;
+}
+.memo-tint.active {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+.memo-del {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  padding: 0 2px;
+  font-size: 14px;
+  line-height: 1;
+}
+.memo-grip {
+  width: 12px;
+  height: 16px;
+  cursor: ew-resize;
+  border-radius: 3px;
+  background: repeating-linear-gradient(90deg, #c9ccd2 0 1px, transparent 1px 3px);
+}
+
+/* annotations merged from suggestions: a quoted note written beside the student's own words */
 .annotation {
   position: absolute;
+  /* Opaque on purpose: a note stuck onto a slide stays readable even where the slide is busy. */
   background: #fffdf5;
-  border: 1px solid #ecdca8;
-  border-left: 4px solid var(--peer);
-  border-radius: 8px;
-  box-shadow: 0 4px 16px rgba(60, 50, 10, 0.12);
+  border: 0;
+  border-left: 3px solid var(--peer);
+  border-radius: 0 6px 6px 0;
+  box-shadow: 0 1px 2px rgba(60, 50, 10, 0.14), 0 6px 18px rgba(60, 50, 10, 0.1);
   font-size: 15px;
   z-index: 2;
   user-select: text;
+  /* The header stays put and the body scrolls, so a long quote never runs off the sheet. */
+  display: flex;
+  flex-direction: column;
 }
 .annotation.source-slide {
   border-left-color: var(--official);
   background: #f8fbff;
-  border-color: #cfe0ff;
 }
 .annotation.source-ai {
   border-left-color: var(--ai);
   background: #fbfaff;
-  border-color: #ddd4fb;
+}
+.annotation-quote {
+  /* The borrowed text is set as a quotation, so it never reads as the student's own words. */
+  padding-left: 2px;
+}
+.annotation-label.credit {
+  color: var(--muted);
+  font-size: 11.5px;
 }
 .annotation-head {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 8px;
+  padding: 5px 8px 4px;
   cursor: grab;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+  border-bottom: 1px dashed rgba(0, 0, 0, 0.08);
   touch-action: none;
 }
 .annotation.collapsed .annotation-head {
@@ -910,9 +1099,12 @@ code {
   flex: 1;
   font-weight: 600;
   font-size: 14px;
+  line-height: 1.35;
+  /* Two lines rather than an ellipsis: the gap's own sentence is what the student recognises. */
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
 }
 .annotation-head button {
   border: 0;
@@ -936,8 +1128,13 @@ code {
 }
 .annotation-body {
   padding: 8px 12px 10px;
-  max-height: 340px;
+  /* The body takes the rest of the box rather than adding to it, so the box can be capped to the sheet. */
+  flex: 1 1 auto;
+  min-height: 0;
   overflow: auto;
+}
+.annotation.collapsed .annotation-body {
+  display: none;
 }
 .annotation-label {
   font-size: 11.5px;
@@ -1003,10 +1200,187 @@ code {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* Two questions, two tabs: about this page, or about everything waiting in the notebook. */
+.panel-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 6px 10px 0;
+}
+.panel-tabs button {
+  border: 0;
+  background: transparent;
+  padding: 5px 9px;
+  font-size: 12.5px;
+  color: var(--muted);
+  border-radius: 7px 7px 0 0;
+  border-bottom: 2px solid transparent;
+}
+.panel-tabs button:hover {
+  color: var(--text);
+}
+.panel-tabs button.active {
+  color: var(--text);
+  font-weight: 600;
+  border-bottom-color: var(--accent);
+}
+
+/* ---------- notebook browser: every suggestion, grouped by the page it sits on */
+.nb-browse-head {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+.nb-group + .nb-group {
+  margin-top: 14px;
+}
+.nb-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.nb-thumb {
+  width: 34px;
+  height: 44px;
+  object-fit: cover;
+  object-position: top;
+  border-radius: 3px;
+  border: 1px solid var(--line);
+  background: #fff;
+  flex: none;
+}
+.nb-group-head b {
+  font-size: 12.5px;
+}
+.nb-go {
+  margin-left: auto;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font-size: 11.5px;
+  padding: 2px 4px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.nb-items {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 42px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.nb-item {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  overflow: hidden;
+}
+.nb-item.open {
+  border-color: var(--line-strong);
+  box-shadow: 0 2px 10px rgba(16, 24, 40, 0.07);
+}
+.nb-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  padding: 7px 8px;
+  cursor: pointer;
+}
+.nb-row:hover {
+  background: #f8f9fb;
+}
+.nb-what {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.nb-what b {
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+.nb-what small {
+  font-size: 11.5px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nb-chev {
+  color: #b0b6bf;
+  font-size: 10px;
+  padding-top: 2px;
+}
+.nb-detail {
+  padding: 2px 10px 10px;
+  font-size: 14px;
+}
+.nb-detail footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 9px;
+}
+.nb-source {
+  margin: 8px 0 0;
+}
+.nb-source img {
+  width: 100%;
+  max-height: 200px;
+  object-fit: contain;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+}
+.nb-source figcaption {
+  font-size: 11.5px;
+  color: var(--muted);
+  margin-top: 3px;
+}
 .panel-body {
   flex: 1;
   overflow-y: auto;
   padding: 14px 16px 40px;
+}
+/* ---------- ask: the obvious thing, at the top of the panel */
+.ask-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+}
+.ask-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.ask-input {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 13.5px;
+  background: #fff;
+}
+.ask-input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+  border-color: var(--accent);
+}
+.ask-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 .stack {
   display: flex;
@@ -1390,30 +1764,111 @@ code {
   border: 1px solid var(--line-strong);
   border-radius: 10px;
   background: #fff;
-  padding: 8px;
+  padding: 10px 8px;
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: flex-start;
   gap: 6px;
   font-size: 12.5px;
+  text-align: center;
+  line-height: 1.3;
 }
-.paper-opt span {
-  width: 54px;
-  height: 70px;
+/* A fixed preview height keeps the four labels on one line, whatever shape the sheet is. */
+.paper-opt .paper-sheet {
+  margin-bottom: 2px;
+}
+.paper-preview {
+  height: 86px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.paper-opt b {
+  font-size: 13px;
+  font-weight: 600;
+}
+.paper-opt em {
+  font-style: normal;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+.paper-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.paper-sheet {
   border: 1px solid var(--line-strong);
   border-radius: 3px;
   background: #fff;
+  overflow: hidden;
+  display: block;
+  flex: none;
 }
-.paper-opt.paper-ruled span {
-  background: repeating-linear-gradient(#fff 0 8px, #c9d6e8 8px 9px);
+.paper-opt.paper-memo .paper-sheet {
+  background: #fffdf0;
+  box-shadow: inset 0 -3px 0 #f2ecc8;
 }
-.paper-opt.paper-grid span {
+.paper-opt.paper-blank .paper-sheet {
+  background: #fff;
+}
+.paper-rules {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.paper-opt.paper-ruled .paper-rules {
+  background-image: linear-gradient(#c9d6e8 1px, transparent 1px);
+  background-position: 0 12px;
+}
+.paper-opt.paper-memo .paper-rules {
+  background-image: linear-gradient(#e6e0c0 1px, transparent 1px);
+  background-position: 0 10px;
+}
+.paper-opt.paper-grid .paper-sheet {
   background-image: linear-gradient(#dfe5ec 1px, transparent 1px), linear-gradient(90deg, #dfe5ec 1px, transparent 1px);
-  background-size: 8px 8px;
+  background-size: 7px 7px;
 }
 .paper-opt.active {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.lib-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+@media (max-width: 560px) {
+  /* Four paper cards side by side are unreadable on a phone: two columns, still all four visible. */
+  .paper-choice {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+  .paper-opt {
+    flex-direction: row;
+    align-items: center;
+    text-align: left;
+    gap: 9px;
+  }
+  .paper-opt .paper-sheet {
+    flex: none;
+    width: 34px !important;
+    height: 46px !important;
+  }
+  .paper-preview {
+    height: auto;
+    flex: none;
+  }
+  .paper-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+  .paper-opt > .paper-copy > b {
+    font-size: 12.5px;
+  }
 }
 .toast {
   position: fixed;
@@ -2798,16 +3253,209 @@ body.note-dragging * {
   }
 }
 
-/* ---------- inline suggestions: quiet markers, a card at the gap, a slim list */
+/* ---------- inline suggestion: the completion-style ghost written into the page */
+.page-with-margin {
+  --margin-track: 32px;
+}
+.inline-ghost {
+  position: absolute;
+  z-index: 5;
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  padding: 5px 8px 5px 5px;
+  border-radius: 8px;
+  /* A wash, not a card: enough to stay readable over a busy slide, light enough to read as in-page. */
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow: 0 1px 6px rgba(16, 24, 40, 0.08);
+  backdrop-filter: blur(3px);
+  transition: background 0.12s;
+  /* It sits exactly where the student writes, so it takes no pointer at all: ink, lasso and eraser
+     pass straight through. Accepting happens from the ＋ in the gutter, which the page never covers. */
+  pointer-events: none;
+  user-select: none;
+}
+/* The + and ⋯ to act on a suggestion, in the margin at the gap: outside the writing column,
+   always reachable, and never over the student's ink. */
+.ghost-tools {
+  position: absolute;
+  left: 0;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  z-index: 7;
+}
+.ghost-accept-gutter {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 7px;
+  border: 1px solid var(--accent);
+  background: #fff;
+  color: var(--accent);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 1px 4px rgba(16, 24, 40, 0.14);
+  transition: background 0.12s, color 0.12s;
+}
+.ghost-accept-gutter:hover,
+.ghost-accept-gutter:focus-visible {
+  background: var(--accent);
+  color: #fff;
+  outline: none;
+}
+.ghost-more {
+  width: 18px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #8a8f98;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+.ghost-more:hover {
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--text);
+}
+.ghost-menu {
+  position: absolute;
+  top: 24px;
+  left: 0;
+  min-width: 190px;
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(16, 24, 40, 0.16);
+  padding: 4px;
+  z-index: 8;
+}
+.ghost-menu button {
+  border: 0;
+  background: transparent;
+  text-align: left;
+  padding: 6px 8px;
+  border-radius: 5px;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.ghost-menu button:hover {
+  background: #f2f4f7;
+}
+.ghost-hint {
+  color: #b0b6bf;
+}
+.ghost-link {
+  border: 0;
+  background: transparent;
+  color: #6b7480;
+  font-size: 11.5px;
+  padding: 0;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.ghost-link:hover {
+  color: var(--text);
+}
+.inline-ghost:hover,
+.inline-ghost:focus-within {
+  background: rgba(255, 255, 255, 0.97);
+}
+.inline-ghost:focus-visible {
+  outline: none;
+}
+.ghost-accept {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  margin-top: 1px;
+  padding: 0;
+  border-radius: 6px;
+  border: 1px dashed #9aa5b1;
+  background: rgba(255, 255, 255, 0.9);
+  color: #55606d;
+  font-size: 12px;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+.inline-ghost:hover .ghost-accept,
+.ghost-accept:focus-visible {
+  border-style: solid;
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+  outline: none;
+}
+.ghost-body {
+  min-width: 0;
+  /* The suggestion is a line of writing, not a card: no box, no shadow, just faint text. */
+  font-size: 15px;
+  line-height: 1.5;
+  color: #6b7480;
+}
+.ghost-gap {
+  font-size: 12px;
+  font-weight: 600;
+  color: #8a8f98;
+  margin-bottom: 1px;
+}
+.ghost-text {
+  /* Dotted underline marks it as not-yet-written, without the weight of a quote block. */
+  border-bottom: 1px dotted #b6bec8;
+  padding-bottom: 2px;
+}
+.inline-ghost.source-peer .ghost-text {
+  border-bottom-color: #f0c3a6;
+}
+.inline-ghost.source-slide .ghost-text {
+  border-bottom-color: #b9cdf3;
+}
+.ghost-foot {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+  font-size: 11.5px;
+  color: #949aa3;
+}
+.ghost-link {
+  border: 0;
+  background: transparent;
+  color: #6b7480;
+  font-size: 11.5px;
+  padding: 0;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.ghost-link:hover {
+  color: var(--text);
+}
+.ghost-count {
+  color: #b0b6bf;
+}
+
 .page-with-margin {
   position: relative;
   display: flex;
   align-items: flex-start;
-  gap: 6px;
+  gap: 8px;
 }
 .margin-markers {
   position: relative;
-  width: 18px;
+  width: 24px;
   flex: none;
 }
 .gap-marker {
@@ -2827,32 +3475,66 @@ body.note-dragging * {
   cursor: pointer;
 }
 .gap-marker > span {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #b9c2cf;
-  transition: transform 0.12s, background 0.12s;
+  display: grid;
+  place-items: center;
+  width: 17px;
+  height: 17px;
+  border-radius: 5px 0 0 5px;
+  background: #e8ecf2;
+  border: 1px solid #cdd5e0;
+  border-right: 0;
+  color: #55606d;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  transition: transform 0.12s, background 0.12s, color 0.12s;
 }
 .gap-marker.peer > span {
-  background: var(--peer);
+  background: #fdeee4;
+  border-color: #f0c3a6;
+  color: #9b4211;
 }
 .gap-marker.slide > span {
-  background: var(--official);
+  background: #e8f0fe;
+  border-color: #b9cdf3;
+  color: #2059c4;
 }
 .gap-marker:hover > span,
-.gap-marker:focus-visible > span {
-  transform: scale(1.5);
+.gap-marker:focus-visible > span,
+.gap-marker.open > span {
+  transform: scale(1.18);
 }
 .gap-marker:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
   border-radius: 50%;
 }
+/* The card opens beside the sheet, in the room the canvas leaves for it, never on top of the ink. */
 .gap-card {
   position: absolute;
-  left: 26px;
-  width: min(360px, 88%);
+  left: calc(100% + 14px);
+  width: min(360px, 32vw);
+  min-width: 300px;
   z-index: 6;
+}
+/* Near the right edge of the window there is no room beside the sheet: the card tucks to the canvas edge. */
+.gap-card.flipped {
+  left: auto;
+  right: -14px;
+  transform: translateX(-100%);
+}
+@media (max-width: 1000px) {
+  /* No room to the side on a tablet in portrait: the card drops below the sheet instead. */
+  .gap-card,
+  .gap-card.flipped {
+    position: relative;
+    left: 0;
+    right: auto;
+    transform: none;
+    width: 100%;
+    min-width: 0;
+    margin-top: 10px;
+  }
 }
 .suggest-card {
   background: #fff;
@@ -2873,6 +3555,35 @@ body.note-dragging * {
   text-transform: uppercase;
   color: var(--muted);
   margin-bottom: 3px;
+}
+/* The gap itself comes first, in the student's words: what was missing where they stopped. */
+.suggest-gap {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  padding: 7px 9px;
+  margin-bottom: 8px;
+  border-radius: 7px;
+  background: #f2f4f7;
+  color: #3d444d;
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+.suggest-gap-mark {
+  flex: none;
+  width: 3px;
+  align-self: stretch;
+  border-radius: 2px;
+  background: #9aa5b1;
+}
+.suggest-card.peer .suggest-gap-mark,
+.suggest-gap .peer {
+  background: var(--peer);
+}
+.suggest-credit {
+  margin-top: 7px;
+  font-size: 11.5px;
+  color: var(--muted);
 }
 .suggest-card h4 {
   margin: 0 0 4px;
@@ -3013,6 +3724,1979 @@ body.note-dragging * {
 }
 /* The author's own marker: amber, only ever on a page whose note is being checked. */
 .gap-marker.disputed > span {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
   background: #e8890c;
+  border: 0;
+  color: transparent;
   box-shadow: 0 0 0 3px rgba(232, 137, 12, 0.18);
+}
+
+/* ==========================================================================
+   Visual pass — a desk, not a dashboard
+   Warm paper, ink and one strong heading weight; controls stay quiet so the
+   page (and the student's own writing) is the thing with weight.
+   ========================================================================== */
+
+::selection {
+  background: #dfe8ee;
+}
+
+:where(button, input, select, textarea, a):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ---------- type & buttons */
+.brand {
+  font-weight: 650;
+  font-size: 16px;
+  letter-spacing: -0.01em;
+  gap: 9px;
+}
+.brand .logo {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  font-family: Georgia, serif;
+  font-size: 14px;
+  font-weight: 400;
+  background: var(--text);
+}
+.lib-title,
+.home-head h1,
+.section-title,
+.panel-head h3,
+.modal h3,
+.nb-title,
+.course-card b {
+  font-weight: 650;
+  letter-spacing: -0.015em;
+}
+.lib-title {
+  font-size: 32px;
+  line-height: 1.08;
+  letter-spacing: -0.02em;
+  margin: 6px 0 9px;
+}
+.home-head h1 {
+  font-size: 32px;
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+  margin: 0;
+}
+.section-title {
+  font-size: 20px;
+  letter-spacing: -0.015em;
+  margin: 34px 0 2px;
+}
+.section-title.first {
+  margin-top: 0;
+}
+
+.btn {
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  padding: 8px 14px;
+  font-weight: 550;
+  background: var(--surface);
+  box-shadow: 0 1px 1px rgba(60, 50, 30, 0.03);
+  transition: background 0.12s, border-color 0.12s, box-shadow 0.12s;
+}
+.btn:hover:not(:disabled) {
+  background: var(--surface-2);
+  border-color: #c8beac;
+}
+.btn.primary {
+  background: var(--text);
+  border-color: var(--text);
+  color: #fbf8f1;
+  box-shadow: 0 1px 2px rgba(38, 35, 29, 0.18);
+}
+.btn.primary:hover:not(:disabled) {
+  background: #15130f;
+  border-color: #15130f;
+}
+.btn.ghost {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  color: var(--muted);
+}
+.btn.ghost:hover:not(:disabled) {
+  background: rgba(38, 35, 29, 0.06);
+  color: var(--text);
+}
+.btn.small {
+  border-radius: 7px;
+  padding: 5px 10px;
+  font-size: 12.5px;
+}
+.icon-btn {
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+}
+.icon-btn:hover:not(:disabled) {
+  background: rgba(38, 35, 29, 0.06);
+}
+
+/* ---------- top bar */
+.app-top {
+  min-height: 60px;
+  padding: 0 clamp(16px, 3vw, 32px);
+  gap: 10px;
+  background: rgba(255, 253, 247, 0.88);
+  border-bottom: 1px solid var(--line);
+}
+.crumbs {
+  gap: 8px;
+}
+.crumb-path {
+  font-size: 13px;
+  gap: 2px;
+}
+.crumb-link {
+  padding: 4px 8px;
+  border-radius: 7px;
+  color: var(--muted);
+}
+.crumb-link:hover {
+  background: rgba(38, 35, 29, 0.05);
+  color: var(--text);
+}
+.crumb-here {
+  padding: 4px 8px;
+  font-weight: 600;
+}
+.crumb-sep {
+  color: #c9c0ae;
+  font-size: 15px;
+}
+.who {
+  padding: 3px 8px 3px 4px;
+  border-radius: 99px;
+  transition: background 0.12s;
+}
+.who:hover {
+  background: rgba(38, 35, 29, 0.05);
+}
+.who select {
+  font-size: 13px;
+  font-weight: 550;
+  cursor: pointer;
+}
+.avatar {
+  width: 26px;
+  height: 26px;
+  font-size: 11px;
+}
+.course-badge {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 10.5px;
+  letter-spacing: 0.07em;
+  padding: 3px 7px;
+  border-radius: 5px;
+}
+.course-badge.big {
+  font-size: 12px;
+}
+
+/* ---------- library shell */
+.lib-shell {
+  grid-template-columns: 272px minmax(0, 1fr);
+}
+.lib-side {
+  background: var(--surface-2);
+  padding: 18px 10px 20px;
+}
+.side-label {
+  margin: 0 12px 10px;
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  font-weight: 600;
+  color: #9b9384;
+}
+.side-course {
+  padding: 7px 8px;
+  gap: 10px;
+  border-radius: 10px;
+}
+.side-course:hover {
+  background: rgba(38, 35, 29, 0.045);
+}
+.side-course.sel {
+  background: var(--surface);
+  box-shadow: 0 1px 2px rgba(60, 50, 30, 0.06), 0 0 0 1px var(--line);
+}
+.lib-chip {
+  border-radius: 9px;
+}
+.side-cname b {
+  font-size: 13px;
+  font-weight: 600;
+}
+.side-cname small {
+  font-size: 11.5px;
+}
+.side-row {
+  height: 34px;
+  border-radius: 8px;
+  font-size: 13px;
+  color: #4f493e;
+}
+.side-row:hover {
+  background: rgba(38, 35, 29, 0.05);
+}
+.side-row.sel {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+.side-row .count {
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+.side-row svg {
+  width: 15px;
+  height: 15px;
+}
+.side-chev {
+  font-size: 9px;
+}
+.side-join {
+  margin-top: auto;
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  padding: 14px 8px 2px;
+  color: var(--muted);
+}
+.side-join:hover {
+  color: var(--text);
+}
+.side-join .plus {
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  border-radius: 8px;
+  font-size: 15px;
+}
+
+/* ---------- library content */
+.lib-content {
+  padding: 40px clamp(20px, 4vw, 56px) 80px;
+}
+.lib-view {
+  max-width: 1180px;
+  margin: 0 auto;
+}
+.lib-head {
+  align-items: flex-end;
+  margin-bottom: 28px;
+}
+.lib-kicker {
+  color: var(--muted);
+  font-size: 10.5px;
+  letter-spacing: 0.13em;
+  font-weight: 600;
+}
+.lib-course-head {
+  align-items: flex-start;
+  gap: 18px;
+}
+.lib-chip.big {
+  width: 56px;
+  height: 56px;
+  border-radius: 14px;
+  font-size: 14px;
+  box-shadow: 0 1px 2px rgba(60, 50, 30, 0.08);
+}
+.lib-desc,
+.lib-sub {
+  font-size: 14px;
+  line-height: 1.55;
+  max-width: 66ch;
+}
+.lib-sub {
+  margin-top: 3px;
+}
+.lib-peers {
+  margin-top: 10px;
+  font-size: 12.5px;
+}
+.lib-head-actions {
+  gap: 8px;
+}
+.lib-folders {
+  grid-template-columns: repeat(auto-fill, minmax(220px, 280px));
+  gap: 12px;
+  margin-bottom: 30px;
+}
+.folder-tile {
+  border-radius: 12px;
+  padding: 12px 14px;
+  box-shadow: none;
+  transition: border-color 0.12s, box-shadow 0.12s, background 0.12s;
+}
+.folder-tile:hover {
+  transform: none;
+  border-color: var(--line-strong);
+  background: var(--surface);
+  box-shadow: 0 6px 18px rgba(60, 50, 30, 0.07);
+}
+.folder-tile svg {
+  width: 30px;
+  height: 30px;
+  color: #c19a63;
+}
+.folder-tile b {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.folder-tile > span > span {
+  font-size: 12px;
+}
+
+/* ---------- files: covers that show what is inside */
+.lib-docs {
+  grid-template-columns: repeat(auto-fill, minmax(158px, 190px));
+  gap: 28px 20px;
+}
+.doc-card {
+  gap: 10px;
+}
+.doc-cover {
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  box-shadow: 0 1px 2px rgba(60, 50, 30, 0.05), 0 8px 20px rgba(60, 50, 30, 0.05);
+  transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s;
+}
+.doc-card:hover .doc-cover {
+  transform: translateY(-2px);
+  border-color: var(--line-strong);
+  box-shadow: 0 2px 4px rgba(60, 50, 30, 0.06), 0 16px 34px rgba(60, 50, 30, 0.09);
+}
+.doc-cover .doc-page {
+  object-fit: cover;
+  object-position: top;
+}
+/* A deck is a slide, not a page: 4:3 keeps the preview whole instead of leaving a white void. */
+.doc-cover.from-slides {
+  aspect-ratio: 4 / 3;
+  border-radius: 8px;
+  background: #efece4;
+}
+.doc-cover .doc-slide {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top center;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+.doc-badge {
+  left: 8px;
+  top: 8px;
+  bottom: auto;
+  background: rgba(255, 253, 247, 0.94);
+  color: var(--text);
+  border: 1px solid rgba(60, 50, 30, 0.1);
+  border-radius: 5px;
+  font-size: 10.5px;
+  font-weight: 650;
+  padding: 2px 6px;
+  backdrop-filter: blur(4px);
+}
+.doc-cover .pdf-badge {
+  right: 8px;
+  top: 8px;
+  bottom: auto;
+  background: rgba(255, 253, 247, 0.86);
+  color: var(--muted);
+  border: 1px solid rgba(60, 50, 30, 0.08);
+  border-radius: 5px;
+  font-size: 9.5px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  padding: 2px 5px;
+  backdrop-filter: blur(4px);
+}
+.doc-cover .ink-badge {
+  right: 8px;
+  bottom: 8px;
+  top: auto;
+  background: var(--peer-soft);
+  color: var(--peer);
+  border: 1px solid #f0d3bd;
+  border-radius: 5px;
+  font-size: 10.5px;
+}
+.doc-meta b {
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.32;
+}
+.doc-meta > span {
+  font-size: 11.5px;
+}
+.paper-cover {
+  position: absolute;
+  inset: 0;
+}
+/* The title is written on the cover, like the label of a real notebook. */
+.paper-label {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.paper-label-title {
+  font-size: 14.5px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: #2b2721;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow-wrap: anywhere;
+}
+.paper-label-meta {
+  font-size: 9px;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: #9b9384;
+  border-top: 1px solid rgba(60, 50, 30, 0.13);
+  padding-top: 7px;
+}
+.lib-empty {
+  border-style: solid;
+  border-color: var(--line);
+  background: rgba(255, 253, 247, 0.45);
+  border-radius: 14px;
+  padding: 40px 24px;
+}
+.lib-empty b {
+  font-weight: 600;
+}
+
+/* ---------- home */
+.library.home {
+  max-width: 1180px;
+  padding-top: 42px;
+}
+.home .continue {
+  margin-bottom: 8px;
+}
+.grid.continue-grid {
+  grid-template-columns: repeat(auto-fill, minmax(300px, 380px));
+  gap: 12px;
+  margin-top: 14px;
+}
+.continue-card {
+  flex-direction: row;
+  align-items: stretch;
+  gap: 14px;
+  padding: 10px;
+  border-radius: 12px;
+  box-shadow: 0 1px 2px rgba(60, 50, 30, 0.04);
+}
+.continue-card:hover {
+  box-shadow: 0 8px 22px rgba(60, 50, 30, 0.08);
+  transform: translateY(-1px);
+}
+.continue-thumb {
+  width: 104px;
+  height: auto;
+  flex: none;
+  aspect-ratio: 4 / 3;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface-2);
+}
+.continue-meta {
+  padding: 2px 2px 2px 0;
+  justify-content: center;
+  gap: 3px;
+  min-width: 0;
+}
+.continue-meta .course-badge {
+  align-self: flex-start;
+  background: none;
+  color: var(--muted);
+  font-size: 9.5px;
+  letter-spacing: 0.12em;
+  padding: 0;
+  border-radius: 0;
+}
+.continue-meta b {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.3;
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.continue-meta .muted {
+  font-size: 11.5px;
+}
+.home-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 44px 0 0;
+}
+.grid.course-grid {
+  grid-template-columns: repeat(auto-fill, minmax(280px, 320px));
+  gap: 18px;
+  margin-top: 16px;
+}
+.home .course-card {
+  border-radius: 14px;
+  box-shadow: 0 1px 2px rgba(60, 50, 30, 0.04);
+}
+.home .course-card:hover {
+  box-shadow: 0 10px 26px rgba(60, 50, 30, 0.09);
+}
+.home .course-cover {
+  aspect-ratio: 16 / 9;
+  background: var(--surface-2);
+}
+.home .course-body {
+  padding: 14px 16px 16px;
+  gap: 6px;
+}
+.home .course-card b {
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+.home .course-card .course-row .course-badge {
+  font-size: 9.5px;
+}
+.home .course-stats {
+  font-size: 11.5px;
+  margin-top: 3px;
+}
+.empty-lectures {
+  border: 1px solid var(--line);
+  background: rgba(255, 253, 247, 0.45);
+  border-radius: 14px;
+  padding: 44px 24px;
+  margin-top: 16px;
+}
+.empty-lectures b {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+/* ---------- editor chrome */
+.editor-top {
+  min-height: 58px;
+  padding: 0 12px;
+  gap: 6px;
+  background: rgba(255, 253, 247, 0.96);
+}
+.editor-top .icon-btn {
+  color: #5b554a;
+}
+.nb-title {
+  font-size: 15px;
+  font-weight: 600;
+  padding: 4px 9px;
+  border-radius: 8px;
+  width: clamp(140px, 24vw, 340px);
+  color: var(--text);
+}
+.nb-title:hover,
+.nb-title:focus {
+  border-color: var(--line-strong);
+  background: var(--surface);
+}
+.save-state {
+  font-size: 11.5px;
+  min-width: 58px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.save-state::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #9cb3a3;
+  flex: none;
+}
+.save-state.s-dirty::before,
+.save-state.s-saving::before {
+  background: #d0a24a;
+}
+.save-state.s-error {
+  color: var(--warn);
+}
+.save-state.s-error::before {
+  background: var(--warn);
+}
+.toolbar {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 4px;
+  gap: 2px;
+  box-shadow: 0 1px 2px rgba(60, 50, 30, 0.05), 0 4px 14px rgba(60, 50, 30, 0.05);
+}
+.tool-group {
+  gap: 1px;
+  padding: 0 5px;
+  border-right-color: var(--line);
+}
+.tool {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  color: #4f493e;
+}
+.tool svg {
+  width: 18px;
+  height: 18px;
+  stroke-width: 1.8;
+}
+.tool:hover:not(:disabled) {
+  background: rgba(38, 35, 29, 0.06);
+}
+.tool.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px rgba(47, 93, 124, 0.14);
+}
+.swatch {
+  width: 18px;
+  height: 18px;
+  border-width: 2px;
+}
+.size {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+}
+.size.active {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px rgba(47, 93, 124, 0.16);
+}
+.panel-toggle {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 9px;
+  padding: 8px 12px;
+  font-weight: 550;
+}
+.panel-toggle:hover:not(:disabled) {
+  background: #dfe9f0;
+  color: var(--accent);
+}
+.panel-toggle.active {
+  background: var(--text);
+  color: #fbf8f1;
+}
+.panel-toggle.active:hover:not(:disabled) {
+  background: #15130f;
+  color: #fbf8f1;
+}
+
+/* thumbnails */
+.thumbs {
+  width: 148px;
+  padding: 14px 12px;
+  background: #efeae0;
+  gap: 14px;
+}
+.thumb-page {
+  border-radius: 4px;
+  box-shadow: 0 0 0 1px rgba(60, 50, 30, 0.1), 0 2px 6px rgba(60, 50, 30, 0.05);
+}
+.thumb.active .thumb-page {
+  box-shadow: 0 0 0 2px var(--accent), 0 3px 10px rgba(60, 50, 30, 0.1);
+}
+.thumb-num {
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+.thumb.active .thumb-num {
+  color: var(--accent);
+  font-weight: 650;
+}
+.thumb-add {
+  border-radius: 8px;
+  padding: 9px 0;
+  font-size: 12px;
+  background: rgba(255, 253, 247, 0.5);
+}
+.thumb-add:hover {
+  background: var(--surface);
+  border-color: var(--muted);
+  color: var(--text);
+}
+
+/* canvas & page chrome */
+.canvas-scroll {
+  padding: 28px 32px 100px;
+  background: var(--canvas);
+}
+.page-stage-wrap {
+  border-radius: 3px;
+  box-shadow: 0 1px 2px rgba(60, 50, 30, 0.08), 0 16px 40px rgba(60, 50, 30, 0.1);
+}
+.page-chrome {
+  font-size: 11.5px;
+}
+.page-label {
+  font-weight: 600;
+  color: #5b554a;
+  letter-spacing: 0.01em;
+}
+.link-chip,
+.index-chip {
+  background: rgba(255, 253, 247, 0.72);
+  border-color: var(--line);
+  font-size: 11.5px;
+}
+.peer-pill {
+  background: var(--peer-soft);
+  border-color: #f0d3bd;
+  color: var(--peer);
+  font-size: 11.5px;
+}
+.zoom-float {
+  border-radius: 11px;
+  background: var(--surface);
+  border-color: var(--line);
+  box-shadow: 0 4px 18px rgba(60, 50, 30, 0.12);
+}
+.zoom-float.with-panel {
+  right: calc(min(380px, 92vw) + 18px);
+}
+
+/* ---------- ask panel */
+.panel {
+  width: min(380px, 92vw);
+  background: var(--surface);
+}
+.panel-head {
+  padding: 16px 12px 0 18px;
+}
+.panel-head h3 {
+  font-size: 22px;
+  margin: 0;
+  gap: 8px;
+  display: flex;
+  align-items: center;
+}
+.tab-count {
+  font-family: Inter, sans-serif;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: var(--peer);
+}
+.panel-tabs {
+  margin: 12px 14px 0;
+  padding: 3px;
+  gap: 2px;
+  background: #f1ece1;
+  border-radius: 9px;
+}
+.panel-tabs button {
+  flex: 1;
+  padding: 7px 8px;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 500;
+  border-bottom: 0;
+}
+.panel-tabs button.active {
+  background: var(--surface);
+  border-bottom: 0;
+  box-shadow: 0 1px 2px rgba(60, 50, 30, 0.09);
+}
+.panel-context {
+  padding: 11px 18px 12px;
+  border-bottom: 1px solid var(--line);
+  font-size: 11.5px;
+}
+.panel-body {
+  padding: 16px 16px 40px;
+}
+.ask-box {
+  padding-bottom: 16px;
+  margin-bottom: 16px;
+}
+.ask-input {
+  border-radius: 10px;
+  padding: 9px 12px;
+  font-size: 13px;
+  background: var(--surface);
+}
+.ask-chips {
+  gap: 6px;
+}
+.ask-chips .chip {
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  border-radius: 99px;
+  padding: 5px 10px;
+  font-size: 11.5px;
+  color: #5b554a;
+}
+.ask-chips .chip:hover {
+  border-color: var(--line-strong);
+  background: var(--surface);
+  color: var(--text);
+}
+.suggest-list {
+  gap: 8px;
+}
+.suggest-row {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+.suggest-row:hover {
+  border-color: var(--line-strong);
+  background: var(--surface-2);
+}
+.suggest-row b {
+  font-size: 13px;
+  line-height: 1.35;
+}
+.suggest-row small {
+  font-size: 11.5px;
+}
+.empty {
+  padding: 30px 14px;
+}
+.empty b {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.empty p {
+  font-size: 12.5px;
+  line-height: 1.55;
+  max-width: 32ch;
+  margin: 6px auto 0;
+}
+.mine h4 {
+  font-size: 15px;
+  font-weight: 600;
+}
+.mine-item {
+  border-radius: 10px;
+}
+.suggest-card {
+  border-radius: 12px;
+  padding: 12px 14px 10px;
+  box-shadow: 0 12px 34px rgba(60, 50, 30, 0.16);
+}
+.suggest-card.inline {
+  box-shadow: none;
+  background: var(--surface-2);
+}
+.suggest-gap {
+  background: #f2ede3;
+  border-radius: 8px;
+  font-size: 12.5px;
+}
+.suggest-card h4 {
+  font-size: 14px;
+  line-height: 1.3;
+}
+.suggest-card footer {
+  gap: 8px;
+}
+.suggest-src {
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+}
+.nb-item {
+  border-radius: 10px;
+  background: var(--surface);
+}
+.nb-row:hover {
+  background: var(--surface-2);
+}
+.nb-go {
+  text-decoration: none;
+  font-weight: 600;
+}
+
+/* ---------- dialogs, inputs, notices */
+.modal-backdrop {
+  background: rgba(38, 33, 26, 0.34);
+  backdrop-filter: blur(3px);
+}
+.modal {
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  box-shadow: 0 30px 80px rgba(38, 33, 26, 0.22);
+  padding: 26px;
+}
+.modal h3 {
+  font-size: 22px;
+  margin: 0 0 16px;
+}
+.input {
+  border-radius: 10px;
+  border-color: var(--line-strong);
+  padding: 9px 12px;
+  background: var(--surface);
+}
+.input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.notice {
+  background: #fbf5e9;
+  border: 1px solid #ecdfc7;
+  border-radius: 10px;
+  color: #6f6553;
+  font-size: 12.5px;
+  line-height: 1.55;
+  padding: 11px 13px;
+}
+.modal-actions {
+  gap: 8px;
+}
+.paper-opt {
+  border-radius: 12px;
+}
+.paper-opt.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.toast {
+  border-radius: 10px;
+  background: var(--text);
+  color: #fbf8f1;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 10px 30px rgba(38, 33, 26, 0.25);
+}
+
+/* ---------- narrow screens */
+@media (max-width: 1000px) {
+  .lib-side {
+    top: 60px;
+    background: var(--surface-2);
+    box-shadow: 0 14px 44px rgba(38, 33, 26, 0.2);
+  }
+  .lib-scrim {
+    inset: 60px 0 0 0;
+    background: rgba(38, 33, 26, 0.2);
+  }
+  .canvas-scroll {
+    padding: 22px 18px 90px;
+  }
+}
+@media (max-width: 700px) {
+  .app-top {
+    min-height: 56px;
+    padding: 0 14px;
+  }
+  .brand {
+    font-size: 19px;
+  }
+  .brand .logo {
+    width: 26px;
+    height: 26px;
+  }
+  .lib-content {
+    padding: 26px 16px 64px;
+  }
+  .lib-title {
+    font-size: 30px;
+  }
+  .lib-course-head {
+    gap: 12px;
+  }
+  .lib-chip.big {
+    width: 44px;
+    height: 44px;
+    border-radius: 11px;
+    font-size: 12px;
+  }
+  .lib-head {
+    align-items: flex-start;
+    gap: 14px;
+  }
+  .lib-head-actions {
+    width: 100%;
+  }
+  .lib-head-actions .btn {
+    flex: 1;
+  }
+  .library.home {
+    padding-top: 28px;
+  }
+  .home-head h1,
+  .lib-title {
+    font-size: 30px;
+  }
+  .home-head {
+    margin-top: 34px;
+  }
+  .section-title {
+    font-size: 22px;
+  }
+  .grid.continue-grid {
+    grid-template-columns: 1fr;
+  }
+  .grid.course-grid {
+    grid-template-columns: 1fr;
+  }
+  .continue-thumb {
+    width: 92px;
+  }
+  .lib-docs {
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 22px 14px;
+  }
+  .paper-label {
+    left: 11px;
+    right: 11px;
+    top: 13px;
+  }
+  .paper-label-title {
+    font-size: 17px;
+  }
+  .editor-top {
+    padding: 6px 8px;
+  }
+  .editor-top .nb-title {
+    font-size: 18px;
+  }
+  .panel {
+    width: 100vw;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* second look: actions and deck covers */
+.lib-head-actions .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.lib-head-actions .btn.ghost {
+  border-color: var(--line-strong);
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 1px 1px rgba(60, 50, 30, 0.03);
+}
+.lib-head-actions .btn.ghost:hover:not(:disabled) {
+  background: var(--surface-2);
+  border-color: #c8beac;
+  color: var(--text);
+}
+.doc-cover.from-slides {
+  aspect-ratio: 16 / 10;
+}
+.doc-cover .pdf-badge {
+  top: auto;
+  bottom: 8px;
+}
+.doc-cover .ink-badge {
+  top: auto;
+  right: auto;
+  bottom: 8px;
+  left: 8px;
+}
+.btn.ghost.panel-toggle {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: transparent;
+}
+.btn.ghost.panel-toggle:hover:not(:disabled) {
+  background: #dfe9f0;
+  color: var(--accent);
+}
+.btn.ghost.panel-toggle.active {
+  background: #f1ece1;
+  color: var(--text);
+}
+.btn.ghost.panel-toggle.active:hover:not(:disabled) {
+  background: #ece5d8;
+  color: var(--text);
+}
+.panel-head .icon-btn {
+  width: 30px;
+  height: 30px;
+  color: var(--muted);
+}
+
+/* third look: course covers as a typographic plate, not a slide screenshot */
+.home .course-cover {
+  position: relative;
+  background: var(--accent-soft);
+  display: grid;
+  place-items: center;
+}
+.course-cover-code {
+  position: relative;
+  z-index: 1;
+  font-size: 32px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  color: var(--text);
+  opacity: 1;
+}
+.home .course-card.other .course-cover-code {
+  color: var(--muted);
+}
+@media (max-width: 1000px) {
+  .lib-shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* The course plate: a clean sheet with the course's own code, not a screenshot. */
+.home .course-cover {
+  background:
+    repeating-linear-gradient(180deg, transparent 0 27px, rgba(47, 93, 124, 0.07) 27px 28px),
+    linear-gradient(135deg, #eef3f6, #fbf7ed);
+}
+.course-cover-code {
+  color: var(--accent);
+}
+.home .course-card.other .course-cover {
+  filter: none;
+  opacity: 1;
+}
+
+/* fourth look: toolbar on narrow screens */
+@media (max-width: 1100px) and (min-width: 701px) {
+  .editor-top .toolbar {
+    justify-content: center;
+  }
+}
+@media (max-width: 700px) {
+  .editor-top .toolbar {
+    -webkit-mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 16px), transparent 100%);
+    mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 16px), transparent 100%);
+  }
+}
+
+.course-cover-code {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  font-size: 32px;
+  color: var(--text);
+}
+.course-cover-code small {
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  font-size: 8.5px;
+  font-weight: 600;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* warm the in-page suggestion and the margin tabs so they belong to the paper */
+.home .course-cover .course-cover-code {
+  color: var(--text);
+  opacity: 1;
+}
+.home .course-cover .course-cover-code small {
+  color: var(--muted);
+  opacity: 1;
+}
+.inline-ghost {
+  background: rgba(255, 253, 247, 0.78);
+  box-shadow: none;
+}
+.inline-ghost:hover,
+.inline-ghost:focus-within {
+  background: rgba(255, 253, 247, 0.98);
+}
+.ghost-body {
+  color: #6b665b;
+}
+.ghost-gap {
+  color: #8b8478;
+}
+.ghost-text {
+  border-bottom-color: #c3baa9;
+}
+.inline-ghost.source-peer .ghost-text {
+  border-bottom-color: #e3b99c;
+}
+.inline-ghost.source-slide .ghost-text {
+  border-bottom-color: #adc3d8;
+}
+.ghost-foot,
+.ghost-count,
+.ghost-hint {
+  color: #948c7d;
+}
+.ghost-accept-gutter {
+  background: var(--surface);
+  box-shadow: 0 1px 4px rgba(60, 50, 30, 0.14);
+}
+.ghost-menu {
+  background: var(--surface);
+  box-shadow: 0 10px 28px rgba(60, 50, 30, 0.16);
+}
+.ghost-menu button:hover {
+  background: var(--surface-2);
+}
+.gap-marker > span {
+  background: #eee8dc;
+  border-color: #d6cbb8;
+  color: #6b665b;
+}
+.gap-marker.peer > span {
+  background: var(--peer-soft);
+  border-color: #f0d3bd;
+  color: #9b4211;
+}
+.gap-marker.slide > span {
+  background: #e8eff4;
+  border-color: #c3d4e0;
+  color: var(--accent);
+}
+.suggest-card {
+  background: var(--surface);
+  box-shadow: 0 12px 34px rgba(60, 50, 30, 0.16);
+}
+.paper-opt {
+  background: var(--surface);
+}
+
+.home .course-title-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.home .course-title-row b {
+  flex: 1;
+  min-width: 0;
+}
+.home .course-title-row .page-menu {
+  margin: -5px -5px 0 0;
+}
+
+/* small labels: dark enough to read, still quiet */
+.side-label {
+  color: #8b8273;
+}
+.paper-label-meta {
+  color: #8b8273;
+}
+.course-cover-code small {
+  color: #8b8273;
+}
+.lasso-pop {
+  background: var(--surface);
+  box-shadow: 0 14px 40px rgba(60, 50, 30, 0.18);
+}
+.lasso-chips .chip {
+  background: var(--surface);
+}
+.lasso-chips .chip:hover {
+  background: var(--surface-2);
+}
+.lasso-ask input {
+  background: var(--surface);
+}
+
+/* ---------- ask as a conversation, suggestions on their own tab */
+.panel-body.ask-body {
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.ask-chat {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+}
+.ask-chat-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 12px 8px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.ask-chat-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: #5b554a;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ask-chat-actions {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+}
+.ask-history-btn {
+  gap: 5px;
+  padding: 5px 7px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.ask-history {
+  position: absolute;
+  top: 32px;
+  right: 0;
+  z-index: 20;
+  width: min(300px, calc(100vw - 64px));
+  max-height: 320px;
+  overflow: auto;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 16px 40px rgba(60, 50, 30, 0.18);
+  padding: 5px;
+}
+.ask-history-title {
+  padding: 7px 9px 5px;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 600;
+}
+.ask-history p {
+  margin: 4px 9px 8px;
+}
+.ask-history button {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  padding: 8px 9px;
+  border-radius: 8px;
+}
+.ask-history button:hover,
+.ask-history button.active {
+  background: var(--surface-2);
+}
+.ask-history button b {
+  font-size: 12.5px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.ask-history button small {
+  font-size: 10.5px;
+  color: var(--muted);
+}
+.ask-thread {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 14px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.ask-empty {
+  padding: 12px 2px 4px;
+}
+.ask-empty b {
+  display: block;
+  font-size: 13.5px;
+  margin-bottom: 4px;
+}
+.ask-empty p {
+  margin: 0 0 12px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+.ask-msg.user {
+  align-self: flex-end;
+  max-width: 88%;
+  background: var(--accent-soft);
+  color: #24445b;
+  border-radius: 12px 12px 4px 12px;
+  padding: 8px 11px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.ask-msg.user small {
+  display: block;
+  margin-top: 3px;
+  font-size: 10px;
+  color: #6f8595;
+}
+.ask-msg.assistant {
+  align-self: stretch;
+}
+.ask-answer {
+  margin: 0 0 8px;
+}
+.ask-answer:last-child {
+  margin-bottom: 0;
+}
+.ask-thinking {
+  font-size: 12px;
+  color: var(--muted);
+  padding: 2px 2px 6px;
+}
+.ask-composer {
+  flex: none;
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+  padding: 9px 14px 12px;
+}
+.ask-context {
+  font-size: 10.5px;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+.ask-compose-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+}
+.ask-compose-row textarea {
+  flex: 1;
+  min-width: 0;
+  min-height: 38px;
+  max-height: 120px;
+  resize: none;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  padding: 9px 11px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.4;
+  background: var(--surface);
+  color: var(--text);
+}
+.ask-compose-row textarea:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+  border-color: var(--accent);
+}
+.ask-send {
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+}
+.ask-composer .ask-chips {
+  margin-top: 8px;
+}
+.ask-unlinked {
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--muted);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+.suggest-tab {
+  display: flex;
+  flex-direction: column;
+}
+.suggest-scope {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  margin-bottom: 14px;
+  background: #f1ece1;
+  border-radius: 9px;
+}
+.suggest-scope button {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  border-radius: 7px;
+  padding: 7px 8px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+}
+.suggest-scope button.active {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 1px 2px rgba(60, 50, 30, 0.09);
+}
+
+/* Long display formulas scroll inside a card instead of running under the panel edge. */
+.md .katex-display {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 2px 0;
+}
+
+/* Small follow-ups from the visual review: a scrollable toolbar that looks intentional,
+   the student's own ink count in ink rather than peer orange, and even card metadata. */
+.doc-cover .ink-badge {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: #c3d4e0;
+}
+.doc-meta b {
+  min-height: 2.6em;
+}
+@media (max-width: 700px) {
+  .editor-top .toolbar {
+    flex-wrap: wrap;
+    width: 100%;
+    overflow: visible;
+    justify-content: flex-start;
+    row-gap: 3px;
+    padding: 4px 6px;
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+  .editor-top .toolbar > .tool-group:first-child {
+    flex: 1 0 100%;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+    padding: 0 0 4px;
+  }
+  .editor-top .toolbar > .tool-group:nth-child(2) {
+    border-right: 0;
+    padding-left: 0;
+  }
+  .editor-top .toolbar > .tool-group:nth-last-of-type(1) {
+    margin-left: auto;
+    border-right: 0;
+  }
+}
+
+/* A completion is a few lines, not a card that covers the slide. */
+.ghost-text .md {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+@media (max-width: 700px) {
+  .ghost-text .md {
+    -webkit-line-clamp: 2;
+  }
+}
+
+/* ---------- direct shares, group notes and live handouts */
+.share-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  margin: 4px 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-2, #f6f1e7);
+}
+.share-tabs button {
+  flex: 1;
+  border: 0;
+  border-radius: 7px;
+  padding: 8px 10px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.share-tabs button.active {
+  background: var(--surface, #fffdf8);
+  color: var(--text);
+  box-shadow: 0 1px 4px #0001;
+}
+.share-note {
+  padding: 10px 12px;
+  margin: 8px 0 12px;
+  border-left: 3px solid var(--accent, #2f5d7c);
+  background: #2f5d7c0d;
+  border-radius: 0 8px 8px 0;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.share-error {
+  padding: 8px 10px;
+  margin: 6px 0;
+  border-radius: 7px;
+  background: #a8435f12;
+  color: #a8435f;
+  font-size: 13px;
+}
+.share-people,
+.share-members {
+  display: grid;
+  gap: 4px;
+  max-height: 300px;
+  min-height: 44px;
+  flex: 0 0 auto;
+  overflow: auto;
+  padding: 2px 0;
+}
+.share-person {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 5px 8px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  cursor: pointer;
+}
+.share-person:hover {
+  border-color: var(--line);
+  background: #00000005;
+}
+.share-person input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent, #2f5d7c);
+}
+.share-person .avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  flex: 0 0 auto;
+}
+.share-person > span:last-child {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+}
+.share-person small {
+  color: var(--muted);
+  font-size: 11px;
+}
+.share-person.all {
+  border-color: var(--line);
+  background: #2f5d7c0a;
+}
+.share-mode {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 12px 0;
+}
+.share-mode button {
+  text-align: left;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.share-mode button.active {
+  border-color: var(--accent, #2f5d7c);
+  background: #2f5d7c0d;
+}
+.share-mode b,
+.share-mode span {
+  display: block;
+}
+.share-mode span {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+.share-members {
+  margin-bottom: 10px;
+}
+.share-members .share-person {
+  cursor: default;
+}
+.share-members .share-person .btn {
+  margin-left: auto;
+}
+.doc-badge.group-badge,
+.doc-badge.share-badge {
+  left: 10px;
+  top: auto;
+  bottom: 10px;
+  background: #2f5d7ce8;
+  color: #fff;
+  font-weight: 600;
+}
+.doc-badge.share-badge {
+  left: auto;
+  right: 10px;
+  background: #6b4e8ee8;
+}
+.folder-unread {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #a8435f;
+  box-shadow: 0 0 0 3px #fff8;
+}
+.folder-tile {
+  position: relative;
+}
+.share-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 14px;
+  border-bottom: 1px solid var(--line);
+  background: #6b4e8e0a;
+  font-size: 13px;
+}
+.share-banner.warn {
+  background: #a8435f0d;
+}
+.share-banner.group {
+  background: #2f5d7c0a;
+}
+.share-banner .spacer {
+  flex: 1;
+}
+.live-banner {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 14px;
+  border-bottom: 1px solid #a8435f33;
+  background: #a8435f0d;
+  font-size: 13px;
+}
+.live-banner .spacer {
+  flex: 1;
+}
+.live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #c92a2a;
+  box-shadow: 0 0 0 3px #c92a2a22;
+  animation: live-pulse 1.8s ease-in-out infinite;
+  flex: 0 0 auto;
+}
+.live-dot.off {
+  background: var(--muted);
+  animation: none;
+  box-shadow: none;
+}
+@keyframes live-pulse {
+  50% { opacity: 0.45; }
+}
+.live-pill {
+  position: fixed;
+  left: 18px;
+  bottom: 18px;
+  z-index: 45;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 10px 15px;
+  border: 1px solid #c92a2a33;
+  border-radius: 999px;
+  background: #fffdf8;
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  box-shadow: 0 8px 24px #0002;
+  cursor: pointer;
+}
+.live-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: #16130ee6;
+}
+.live-view {
+  display: flex;
+  flex-direction: column;
+  width: min(1100px, 96vw);
+  max-height: 94vh;
+  border-radius: 14px;
+  overflow: hidden;
+  background: #f8f3e9;
+  box-shadow: 0 24px 80px #0008;
+}
+.live-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  background: #fffdf8;
+}
+.live-head > div {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+.live-head small {
+  color: var(--muted);
+  font-size: 12px;
+}
+.live-head .spacer {
+  flex: 1;
+}
+.live-audience {
+  color: var(--muted);
+  font-size: 12px;
+}
+.live-page {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  place-items: center;
+  padding: 14px;
+  background: #ded6c7;
+}
+.live-page img {
+  max-width: 100%;
+  max-height: 76vh;
+  object-fit: contain;
+  border-radius: 4px;
+  box-shadow: 0 6px 24px #0003;
+  background: #fff;
+}
+.live-ended {
+  padding: 36px 22px;
+  text-align: center;
+}
+.live-ended p {
+  color: var(--muted);
+}
+.live-ended .modal-actions {
+  justify-content: center;
+}
+.live-foot {
+  padding: 8px 14px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+  background: #fffdf8;
+}
+.live-error {
+  padding: 8px 14px;
+  color: #a8435f;
+  font-size: 12px;
+}
+.presence-stack {
+  display: flex;
+  align-items: center;
+  margin-left: 4px;
+}
+.presence-avatar {
+  width: 24px;
+  height: 24px;
+  margin-left: -5px;
+  border: 2px solid var(--surface, #fffdf8);
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+}
+.presence-more {
+  margin-left: 3px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.share-btn {
+  white-space: nowrap;
+}
+@media (max-width: 700px) {
+  .share-mode {
+    grid-template-columns: 1fr;
+  }
+  .share-banner {
+    flex-wrap: wrap;
+  }
+}
+.share-page-choice {
+  margin: 8px 0;
+  border: 1px dashed var(--line);
+  border-radius: 9px;
+}
+.share-page-choice > span:last-child {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+.share-page-choice small {
+  color: var(--muted);
+  font-size: 11px;
+}
+@media (max-width: 700px) {
+  .live-banner {
+    flex-wrap: wrap;
+  }
+  .presence-stack {
+    display: none;
+  }
+}
+.share-sent {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 8px 0;
+  padding: 8px 10px;
+  border-top: 1px dashed var(--line);
+  color: var(--muted);
+  font-size: 12px;
+}
+.share-sent b {
+  color: var(--text);
+  font-size: 12px;
 }

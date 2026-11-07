@@ -5,13 +5,13 @@ import { renderPdf } from './pdf';
 import type { Jobs } from './jobs';
 import type { PageKind } from '../shared/types';
 
-export async function storeFile(store: Store, dataDir: string, src: string | Buffer, name: string, mime: string) {
+export async function storeFile(store: Store, dataDir: string, src: string | Buffer, name: string, mime: string, uploadedBy: string | null = null) {
   await mkdir(join(dataDir, 'files'), { recursive: true });
   const buf = typeof src === 'string' ? await readFile(src) : src;
   const path = join(dataDir, 'files', id() + (extname(name).toLowerCase() || ''));
   if (typeof src === 'string') await copyFile(src, path);
   else await writeFile(path, buf);
-  return store.addFile(path, mime, name, hash(buf));
+  return store.addFile(path, mime, name, hash(buf), uploadedBy);
 }
 
 export function guessLecture(filename: string) {
@@ -102,6 +102,9 @@ export async function importNotebookPdf(store: Store, jobs: Jobs, dataDir: strin
 }
 
 export const PAPER_HEIGHT = 1414;
+export function paperSize(_kind: PageKind) {
+  return { width: 1000, height: PAPER_HEIGHT };
+}
 export function addBlankPage(store: Store, notebookId: string, kind: PageKind, after: string | null) {
   const pages = store.pages(notebookId);
   const idx = after ? pages.findIndex((p) => p.id === after) : pages.length - 1;
@@ -110,5 +113,6 @@ export function addBlankPage(store: Store, notebookId: string, kind: PageKind, a
   const position = prev ? (next ? (prev.position + next.position) / 2 : prev.position + 1) : 1;
   // A page inserted after a slide inherits that slide as its suggested topic.
   const link = prev?.link.lectureId ? { lectureId: prev.link.lectureId, slideId: prev.link.slideId, confidence: prev.link.confidence, confirmed: prev.link.confirmed } : undefined;
-  return store.addPage({ notebookId, position, kind, width: 1000, height: PAPER_HEIGHT, link });
+  const size = paperSize(kind);
+  return store.addPage({ notebookId, position, kind, width: size.width, height: size.height, link });
 }

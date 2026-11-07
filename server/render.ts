@@ -34,9 +34,35 @@ function wrap(text: string, width: number, size: number) {
 }
 
 function textSvg(it: Extract<Item, { type: 'text' }>) {
+  // Typed lines sit on the paper's ruling: the render must use the same line height the editor draws with.
+  const lh = it.lineHeight ?? it.size * 1.25;
   return wrap(it.text, it.w, it.size)
-    .map((l, i) => `<text x="${it.x}" y="${it.y + it.size * (i + 1) * 1.25}" font-size="${it.size}" font-family="Helvetica, Arial, sans-serif" fill="${esc(it.color)}">${esc(l)}</text>`)
+    .map(
+      (l, i) =>
+        `<text x="${it.x}" y="${it.y + it.size * 0.55 + lh * (i + 1)}" font-size="${it.size}" font-family="Helvetica, Arial, sans-serif" fill="${esc(it.color)}">${esc(l)}</text>`,
+    )
     .join('');
+}
+
+const MEMO_FILL: Record<string, string> = { yellow: '#fff7cc', pink: '#ffe3ec', blue: '#e0edff', green: '#e2f5e4' };
+
+/**
+ * A memo is the student's own writing, so it belongs in the page the model reads and in what
+ * classmates can learn from — unlike an annotation, which is AI text and stays out of both.
+ */
+function memoSvg(it: Extract<Item, { type: 'memo' }>) {
+  const pad = 10;
+  const lines = wrap(it.text, it.w - pad * 2, it.size);
+  const h = Math.max(60, lines.length * it.size * 1.35 + pad * 2);
+  const body = lines
+    .map(
+      (l, i) =>
+        `<text x="${it.x + pad}" y="${it.y + pad + it.size * (i + 1) * 1.35}" font-size="${it.size}" font-family="Helvetica, Arial, sans-serif" fill="${esc(it.color)}">${esc(l)}</text>`,
+    )
+    .join('');
+  return (
+    `<rect x="${it.x}" y="${it.y}" width="${it.w}" height="${h}" rx="3" fill="${MEMO_FILL[it.tint] ?? MEMO_FILL.yellow}" stroke="#00000018"/>` + body
+  );
 }
 
 /**
@@ -47,15 +73,25 @@ export async function renderPage(
   page: Page & { image?: string | null },
   store: Store,
   dataDir: string,
-  { width = 1400, annotations = false } = {},
+  { width = 1400, annotations = false, ownOnly = false, inkOnly = false } = {},
 ): Promise<Buffer> {
   const scale = width / page.width;
   const height = Math.round(page.height * scale);
+  const strokes = ownOnly ? page.strokes.filter((s) => s.origin !== 'shared') : page.strokes;
+  const items = ownOnly ? page.items.filter((i) => i.origin !== 'shared') : page.items;
+  // The ink-only image is what the model actually reads: white paper, no slide, no grid, no pasted
+  // screenshot, no shared layer. It is much easier to transcribe than a full page render.
+  if (inkOnly) {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${page.width} ${page.height}">${strokes
+      .map((s) => `<path d="${strokePath(s)}" fill="${esc(s.color)}" fill-opacity="${strokeOpacity(s)}"/>`)
+      .join('')}</svg>`;
+    return sharp({ create: { width, height, channels: 3, background: '#ffffff' } }).composite([{ input: Buffer.from(svg), left: 0, top: 0 }]).png().toBuffer();
+  }
   const base = page.image
     ? sharp(join(dataDir, 'assets', page.image)).resize(width, height, { fit: 'fill' })
     : sharp({ create: { width, height, channels: 3, background: '#ffffff' } });
   const overlays: OverlayOptions[] = [];
-  for (const it of page.items)
+  for (const it of items)
     if (it.type === 'image') {
       const f = store.file(it.fileId);
       if (!f) continue;
@@ -68,10 +104,10 @@ export async function renderPage(
     }
   const svgParts = [
     page.image ? '' : paperSvg(page.kind, page.width, page.height),
-    ...page.strokes.map((s) => `<path d="${strokePath(s)}" fill="${esc(s.color)}" fill-opacity="${strokeOpacity(s)}"/>`),
-    ...page.items.flatMap((it) => (it.type === 'text' ? [textSvg(it)] : [])),
+    ...strokes.map((s) => `<path d="${strokePath(s)}" fill="${esc(s.color)}" fill-opacity="${strokeOpacity(s)}"/>`),
+    ...items.flatMap((it) => (it.type === 'text' ? [textSvg(it)] : it.type === 'memo' ? [memoSvg(it)] : [])),
     ...(annotations
-      ? page.items.flatMap((it) =>
+      ? items.flatMap((it) =>
           it.type === 'annotation'
             ? [`<rect x="${it.x}" y="${it.y}" width="${it.w}" height="120" fill="#fff7d6" stroke="#e8c45c"/>` + textSvg({ ...it, type: 'text', text: it.title + '\n' + it.body, color: '#5b4a12', size: 14 } as any)]
             : [],
@@ -102,5 +138,8 @@ export async function cropPng(png: Buffer, bbox: [number, number, number, number
   return sharp(png).extract({ left, top, width, height }).png().toBuffer();
 }
 
-export const hasOriginalContent = (p: Page) =>
-  p.strokes.length > 0 || p.items.some((i) => (i.type === 'text' && i.text.trim()) || i.type === 'image');
+export const hasOriginalContent = (p: Page, ownOnly = false) => {
+  const strokes = ownOnly ? p.strokes.filter((s) => s.origin !== 'shared') : p.strokes;
+  const items = ownOnly ? p.items.filter((i) => i.origin !== 'shared') : p.items;
+  return strokes.length > 0 || items.some((i) => ((i.type === 'text' || i.type === 'memo') && i.text.trim()) || i.type === 'image');
+};

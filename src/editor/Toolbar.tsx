@@ -1,15 +1,17 @@
 import { useRef } from 'react';
+import { Eraser, Highlighter, ImagePlus, LassoSelect, Pen, PenTool, Redo2, StickyNote, Type, Undo2 } from 'lucide-react';
 import type { ToolName, ToolState } from './types';
 import { isTouchDevice } from '../ui';
 
 const PEN_COLORS = ['#1f2933', '#2f6fed', '#d6336c', '#2b8a3e', '#e8590c', '#7048e8'];
 const HL_COLORS = ['#ffd43b', '#8ce99a', '#74c0fc', '#ffa8a8'];
-const ICONS: Record<ToolName, { label: string; svg: React.ReactNode; key: string }> = {
-  pen: { label: 'Pen', key: 'P', svg: <path d="M4 20l4-1 11-11-3-3L5 16l-1 4zM14 6l3 3" /> },
-  highlighter: { label: 'Highlighter', key: 'H', svg: <path d="M6 19h6M9 15l-3 3M8 14l7-9 4 4-9 7-2-2z" /> },
-  eraser: { label: 'Eraser', key: 'E', svg: <path d="M8 20h12M5 15l9-9 5 5-8 8H9l-4-4z" /> },
-  lasso: { label: 'Lasso: select, move, explain', key: 'L', svg: <path d="M12 5c5 0 8 2 8 5s-3 5-8 5-8-2-8-5 3-5 8-5zM7 14c-1 2 0 4 2 4s2 2 1 3" strokeDasharray="2.5 2" /> },
-  text: { label: 'Text', key: 'T', svg: <path d="M5 6V4h14v2M12 4v16M9 20h6" /> },
+const ICONS: Record<ToolName, { label: string; icon: React.ReactNode; key: string }> = {
+  pen: { label: 'Pen', icon: <Pen />, key: 'P' },
+  highlighter: { label: 'Highlighter', icon: <Highlighter />, key: 'H' },
+  eraser: { label: 'Eraser', icon: <Eraser />, key: 'E' },
+  lasso: { label: 'Lasso: select, move, explain', icon: <LassoSelect />, key: 'L' },
+  text: { label: 'Text', icon: <Type />, key: 'T' },
+  memo: { label: 'Memo: stick a note on the page', icon: <StickyNote />, key: 'M' },
 };
 
 export function Toolbar({
@@ -47,13 +49,11 @@ export function Toolbar({
             aria-pressed={tool.tool === t}
             onClick={() => setTool((s) => ({ ...s, tool: t }))}
           >
-            <svg viewBox="0 0 24 24">{ICONS[t].svg}</svg>
+            {ICONS[t].icon}
           </button>
         ))}
         <button className="tool" title="Insert image" aria-label="Insert image" onClick={() => file.current?.click()}>
-          <svg viewBox="0 0 24 24">
-            <path d="M4 5h16v14H4zM4 16l5-5 4 4 2-2 5 5M15 9.5a1 1 0 100-.01" />
-          </svg>
+          <ImagePlus />
         </button>
         <input
           ref={file}
@@ -88,14 +88,10 @@ export function Toolbar({
       )}
       <div className="tool-group">
         <button className="tool" disabled={!canUndo} onClick={onUndo} title="Undo (Ctrl+Z)" aria-label="Undo">
-          <svg viewBox="0 0 24 24">
-            <path d="M9 14L4 9l5-5M4 9h10a6 6 0 010 12h-3" />
-          </svg>
+          <Undo2 />
         </button>
         <button className="tool" disabled={!canRedo} onClick={onRedo} title="Redo (Ctrl+Shift+Z)" aria-label="Redo">
-          <svg viewBox="0 0 24 24">
-            <path d="M15 14l5-5-5-5M20 9H10a6 6 0 000 12h3" />
-          </svg>
+          <Redo2 />
         </button>
       </div>
       {isTouchDevice() && (
@@ -106,9 +102,7 @@ export function Toolbar({
           aria-label="Stylus only"
           onClick={() => setTool((s) => ({ ...s, stylusOnly: !s.stylusOnly }))}
         >
-          <svg viewBox="0 0 24 24">
-            <path d="M15 4l5 5-9 9H6v-5zM4 20h6" />
-          </svg>
+          <PenTool />
         </button>
       )}
     </div>

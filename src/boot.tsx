@@ -8,6 +8,7 @@ export const BootContext = createContext<Bootstrap & { reload: () => void; selec
   course: null,
   lectures: [],
   students: [],
+  me: { id: 'thomas', name: 'Thomas', initials: 'T', color: '#2f6fed', role: 'student' },
   ai: { configured: false, model: null },
   reload: () => {},
   selectCourse: () => {},

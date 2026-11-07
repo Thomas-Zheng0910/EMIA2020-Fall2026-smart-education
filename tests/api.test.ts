@@ -127,7 +127,7 @@ describe('course notebook API', () => {
     expect(shared).toHaveLength(2);
     expect(shared.filter((f: any) => f.shared)).toHaveLength(1);
     const indexCall = t.calls.find((c) => c.prompt.includes('Extract the course knowledge'))!;
-    expect(indexCall.images).toBe(1);
+    expect(indexCall.images).toBe(2);
     expect(indexCall.prompt).toContain('Summary of slide 2');
 
     // Closing the notebook is what uploads the notes for classmates; it merges the page's slide.
@@ -155,9 +155,18 @@ describe('course notebook API', () => {
     const ownView = (await t.app.inject({ url: `/api/pages/${page.id}/suggestions`, headers: t.as('alex') })).json();
     expect(ownView.own.find((o: any) => o.state === 'shared')).toBeTruthy();
     expect(ownView.own.find((o: any) => o.state === 'private')!.sourceLine).toContain('hard to read');
-    // dismiss hides that gap for Thomas only
+    // The notebook browser finds the same suggestion, with the page it sits on and its source note.
+    const book = (await t.app.inject({ url: `/api/notebooks/${thomas.notebook.id}/suggestions`, headers: t.as('thomas') })).json();
+    expect(book.total).toBe(1);
+    expect(book.groups).toHaveLength(1);
+    expect(book.groups[0]).toMatchObject({ pageId: thomas.pages[1].id, pageNumber: 2 });
+    expect(book.groups[0].items[0]).toMatchObject({ id: sugg.gaps[0].id, source: 'peer', pageLabel: 'Slide 2' });
+    expect(book.groups[0].items[0].fragmentId).toBeTruthy();
+    expect(book.groups[0].thumb).toContain(`/api/pages/${thomas.pages[1].id}/render.png`);
+    // It answers the same dismissals as the page: what one hides, the other hides too.
     await t.app.inject({ method: 'POST', url: `/api/pages/${thomas.pages[1].id}/suggestions/${sugg.gaps[0].id}/dismiss`, headers: t.as('thomas') });
     expect((await t.app.inject({ url: `/api/pages/${thomas.pages[1].id}/suggestions`, headers: t.as('thomas') })).json().gaps).toHaveLength(0);
+    expect((await t.app.inject({ url: `/api/notebooks/${thomas.notebook.id}/suggestions`, headers: t.as('thomas') })).json().total).toBe(0);
     expect((await t.app.inject({ url: `/api/pages/${page.id}/suggestions`, headers: t.as('alex') })).json().own.length).toBeGreaterThan(0);
   });
 
@@ -209,6 +218,39 @@ describe('course notebook API', () => {
     expect(call.prompt).toContain('Posterior is prior times likelihood');
   });
 
+  it('keeps ask conversations with their page context and history', async () => {
+    const t = await seeded();
+    const thomas = await t.open('thomas');
+    const first = await t.app.inject({ method: 'POST', url: '/api/ask', headers: t.as('thomas'), payload: { pageId: thomas.pages[1].id, question: 'why divide?' } });
+    expect(first.statusCode).toBe(200);
+    const out = first.json();
+    expect(out.sessionId).toBeTruthy();
+    expect(out.questionMessage.role).toBe('user');
+    expect(out.questionMessage.text).toBe('why divide?');
+    expect(out.message.role).toBe('assistant');
+    expect(out.message.pageLabel).toMatch(/^Slide /);
+    expect(out.message.cards.length).toBeGreaterThan(0);
+    const list = (await t.app.inject({ url: `/api/notebooks/${thomas.notebook.id}/ask/sessions`, headers: t.as('thomas') })).json().sessions;
+    expect(list).toHaveLength(1);
+    expect(list[0].title).toContain('why divide');
+    expect(list[0].messageCount).toBe(2);
+    const second = await t.app.inject({
+      method: 'POST',
+      url: '/api/ask',
+      headers: t.as('thomas'),
+      payload: { pageId: thomas.pages[1].id, question: 'and the denominator?', sessionId: out.sessionId },
+    });
+    expect(second.statusCode).toBe(200);
+    const thread = (await t.app.inject({ url: `/api/ask/sessions/${out.sessionId}`, headers: t.as('thomas') })).json();
+    expect(thread.messages.map((m: { role: string }) => m.role)).toEqual(['user', 'assistant', 'user', 'assistant']);
+    expect(thread.messages[2].text).toBe('and the denominator?');
+    // Another student cannot read the conversation, and a session cannot be reused from another notebook.
+    expect((await t.app.inject({ url: `/api/ask/sessions/${out.sessionId}`, headers: t.as('alex') })).statusCode).toBe(404);
+    const priya = await t.open('priya');
+    const other = await t.app.inject({ method: 'POST', url: '/api/ask', headers: t.as('priya'), payload: { pageId: priya.pages[0].id, question: 'hello', sessionId: out.sessionId } });
+    expect(other.statusCode).toBe(404);
+  });
+
   it('quizzes only on slide-grounded questions and grades without leaking answers', async () => {
     const t = await seeded();
     const res = await t.app.inject({ method: 'POST', url: '/api/quizzes', headers: t.as('thomas'), payload: { scope: { kind: 'lecture', lectureId: t.lecture.id } } });
@@ -250,10 +292,11 @@ describe('course notebook API', () => {
     await t.jobs.indexPage(alex.pages[1].id);
     const frag = (await t.app.inject({ url: `/api/pages/${alex.pages[1].id}/shared`, headers: t.as('alex') })).json().find((f: any) => f.shared);
 
-    // Thomas creates a second course: he is enrolled, it is empty, and Priya can see it to join.
-    const created = await t.app.inject({ method: 'POST', url: '/api/courses', headers: t.as('thomas'), payload: { code: 'comp3311', name: 'Databases' } });
+    // The professor creates a second course; Thomas joins it. It is empty and Priya can see it to join.
+    const created = await t.app.inject({ method: 'POST', url: '/api/courses', headers: t.as('professor'), payload: { code: 'comp3311', name: 'Databases' } });
     expect(created.json()).toMatchObject({ id: 'comp3311', code: 'COMP3311' });
-    expect((await t.app.inject({ method: 'POST', url: '/api/courses', headers: t.as('thomas'), payload: { code: 'COMP3311', name: 'Dup' } })).statusCode).toBe(409);
+    expect((await t.app.inject({ method: 'POST', url: '/api/courses', headers: t.as('professor'), payload: { code: 'COMP3311', name: 'Dup' } })).statusCode).toBe(409);
+    await t.app.inject({ method: 'POST', url: '/api/courses/comp3311/enroll', headers: t.as('thomas') });
     const boot = (await t.app.inject({ url: '/api/bootstrap', headers: t.as('thomas', 'comp3311') })).json();
     expect(boot.enrolled).toEqual(['comp2211', 'comp3311']);
     expect(boot.course.id).toBe('comp3311');

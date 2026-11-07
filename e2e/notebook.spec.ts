@@ -12,6 +12,17 @@ async function home(page: Page, student: string) {
 }
 async function as(page: Page, student: string, code = 'ML1000') {
   await home(page, student);
+  // A pending named share is a modal on the home page; tests that do not exercise it can put it away.
+  const dialog = page.getByRole('dialog');
+  const appeared = await dialog.waitFor({ state: 'visible', timeout: 700 }).then(() => true).catch(() => false);
+  if (appeared) {
+    const later = dialog.getByRole('button', { name: 'Later' });
+    if (await later.isVisible().catch(() => false)) await later.click();
+    else {
+      const notNow = dialog.getByRole('button', { name: 'Not now' });
+      if (await notNow.isVisible().catch(() => false)) await notNow.click();
+    }
+  }
   await page.locator('.course-card', { hasText: code }).click();
   await expect(page.locator('.lib-kicker')).toContainText(code);
 }
@@ -31,7 +42,7 @@ async function openFolder(page: Page, name: string) {
 /** Decks are shared records: opening one builds the student's own pages the first time. */
 async function openLecture(page: Page) {
   await side(page, 'All files').click();
-  await page.locator('.doc-card', { hasText: 'Gradient' }).click();
+  await page.locator('.doc-card[data-deck]', { hasText: 'Gradient' }).click();
   await expect(page.locator('.page-stage').first()).toBeVisible();
 }
 /** PDFs are added by dragging them in (no import buttons). */
@@ -70,14 +81,14 @@ async function join(page: Page, student: string, code: string) {
   await home(page, student);
   await page.locator('.course-card', { hasText: code }).getByRole('button', { name: 'Join' }).click();
   // joining explains automatic sharing before the student commits
-  await expect(page.getByRole('dialog')).toContainText('shares the useful parts with classmates');
+  await expect(page.getByRole('dialog')).toContainText('offers the useful parts to classmates');
   await page.getByRole('button', { name: 'Join course' }).click();
   await expect(page.locator('.lib-kicker')).toContainText(code);
 }
 
 test.describe.serial('notebook workflow', () => {
   test('create a course, others join, import a lecture PDF', async ({ page }) => {
-    await home(page, 'alex');
+    await home(page, 'professor');
     await expect(page.locator('.empty-lectures')).toContainText('haven’t joined');
     await page.getByRole('button', { name: '+ New course' }).click();
     await page.getByPlaceholder(/Code/).fill('ML1000');
@@ -89,9 +100,9 @@ test.describe.serial('notebook workflow', () => {
     await expect(folderTile(page, 'Quizzes')).toBeVisible();
     await openedFolder(page, 'Lectures');
     await expect(page.locator('.lib-empty')).toContainText('This folder is empty');
-    for (const s of ['thomas', 'priya']) await join(page, s, 'ML1000');
-    await as(page, 'alex');
-    // dropping a PDF onto the Lectures folder adds a lecture for the whole course
+    for (const s of ['thomas', 'priya', 'alex']) await join(page, s, 'ML1000');
+    // only the professor can add official slides
+    await as(page, 'professor');
     await openedFolder(page, 'Lectures');
     await dropPdf(page, page.locator('.lib-content'), '1-gradient-descent.pdf', pdf);
     await expect(page.locator('.toast')).toContainText('Added “1-gradient-descent” to Lectures');
@@ -99,6 +110,10 @@ test.describe.serial('notebook workflow', () => {
     await expect(deck).toBeVisible({ timeout: 20000 });
     await expect(deck.locator('.pdf-badge')).toHaveText('PDF');
     await expect(deck.locator('.doc-badge')).toHaveText('L1');
+    // students can read the official deck; the professor owns publishing it
+    await as(page, 'alex');
+    await openedFolder(page, 'Lectures');
+    await expect(page.locator('.doc-card', { hasText: 'Gradient descent' })).toBeVisible();
   });
 
   test('ink persists, undo works, and a deck keeps its badge wherever it is filed', async ({ page }) => {
@@ -144,31 +159,59 @@ test.describe.serial('notebook workflow', () => {
     await openLecture(page);
     // Quiet by default: no panel, no badge on the page — just ink.
     await expect(page.locator('.panel')).toHaveCount(0);
-    await expect(page.locator('.gap-marker')).toHaveCount(0);
+    await expect(page.locator('.inline-ghost')).toHaveCount(0);
     // Gaps are found when the page is read, which happens after the student writes.
     await draw(page, 1);
     await expect(page.locator('.save-state')).toHaveText('Saved');
-    // Re-reading on open is what lets Alex's note replace the slide as the source of this gap.
-    await expect
-      .poll(async () => page.locator('.page-slot').nth(1).locator('.gap-marker.peer').count(), { timeout: 60000 })
-      .toBe(1);
-    const marker = page.locator('.page-slot').nth(1).locator('.gap-marker');
-    await expect(page.locator('.page-slot').nth(0).locator('.gap-marker')).toHaveCount(0);
-    // Tapping it opens the card in place: a classmate's note, with the handwriting available.
-    await marker.click();
-    const card = page.locator('.suggest-card').first();
-    await expect(card.locator('.suggest-src')).toHaveText("From 1 classmate's note");
-    await expect(card).toContainText('The update rule');
-    await card.getByRole('button', { name: 'Add to my notes' }).click();
+    // The suggestion appears inline in the page, like a completion: text plus an accept button.
+    const ghost = page.locator('.page-slot').nth(1).locator('.inline-ghost');
+    await expect(ghost).toBeVisible({ timeout: 60000 });
+    await expect(ghost.locator('.ghost-gap')).toContainText('The step after the gradient.');
+    // The card is grounded in something: a classmate's note, the slide, or the model itself.
+    await expect(ghost.locator('.ghost-credit')).toHaveText(/From |AI explanation/, { timeout: 60000 });
+    // One click accepts it: the text lands in the page as a quoted note and the ghost goes away.
+    await page.locator('.ghost-accept-gutter').first().click();
     const note = page.locator('.page-slot').nth(1).locator('.annotation');
-    await expect(note).toContainText('From a classmate’s note');
+    await expect(note).toBeVisible();
+    await expect(note.locator('.annotation-label.credit')).toHaveText(/From the slides|From a classmate’s note|AI explanation/);
+    // The gap is answered, so its ghost is gone: the note on the page is the record.
+    await expect(ghost).toHaveCount(0);
+    // Undo takes the note back out, and the suggestion returns with it.
     await page.keyboard.press('Control+z');
     await expect(note).toHaveCount(0);
-    // Dismissing is remembered: the marker does not come back for this student.
-    await marker.click();
+    await expect(ghost).toBeVisible({ timeout: 20000 });
+    // "Full note" opens the side card, which is where a long answer and its sources live.
+    await page.locator('.ghost-more').first().click();
+    await page.getByRole('menuitem', { name: 'Full note' }).click();
+    await expect(page.locator('.suggest-card')).toHaveCount(1);
+    await page.locator('.suggest-card').first().getByRole('button', { name: 'Add beside my notes' }).click();
+    await expect(note).toBeVisible();
+    // Accepting is saved, not just drawn.
+    await expect(page.locator('.save-state')).toHaveText('Saved');
+    await page.reload();
+    await expect(page.locator('.page-slot').nth(1).locator('.annotation')).toBeVisible();
+    await expect(page.locator('.page-slot').nth(1).locator('.inline-ghost')).toHaveCount(0);
+  });
+
+  test('hiding a suggestion two ways: "Not now" is temporary, Dismiss is remembered', async ({ page }) => {
+    await as(page, 'thomas');
+    await openLecture(page);
+    await draw(page, 2);
+    await expect(page.locator('.save-state')).toHaveText('Saved');
+    const ghost = page.locator('.page-slot').nth(2).locator('.inline-ghost');
+    await expect(ghost).toBeVisible({ timeout: 60000 });
+    // "Not now" only puts it away for this visit.
+    await page.locator('.ghost-more').first().click();
+    await page.getByRole('menuitem', { name: 'Not now' }).click();
+    await expect(ghost).toHaveCount(0);
+    await page.reload();
+    await expect(page.locator('.page-slot').nth(2).locator('.inline-ghost')).toBeVisible({ timeout: 60000 });
+    // Dismiss, from the full note, is the remembered decision.
+    await page.locator('.ghost-more').first().click();
+    await page.getByRole('menuitem', { name: 'Full note' }).click();
     await page.locator('.suggest-card').first().getByRole('button', { name: 'Dismiss' }).click();
     await page.reload();
-    await expect(page.locator('.page-slot').nth(1).locator('.gap-marker')).toHaveCount(0, { timeout: 20000 });
+    await expect(page.locator('.page-slot').nth(2).locator('.inline-ghost')).toHaveCount(0, { timeout: 20000 });
   });
 
   test('lasso → a popover beside the selection answers in place', async ({ page }) => {
@@ -197,8 +240,8 @@ test.describe.serial('notebook workflow', () => {
 
   test('blank notebook with typed text and inserted pages', async ({ page }) => {
     await as(page, 'priya');
-    // a new notebook is made from the tree's background menu, not from a button
-    await menu(page, page.locator('.lib-content'), 'New notebook');
+    // A new notebook is made from the button beside "New folder".
+    await page.getByRole('button', { name: '+ New notebook' }).click();
     await page.getByPlaceholder(/Revision/).fill('My revision');
     await page.getByRole('button', { name: 'Create' }).click();
     await expect(page.locator('.page-stage')).toHaveCount(1);
@@ -208,11 +251,87 @@ test.describe.serial('notebook workflow', () => {
     await page.locator('.nb-title').click();
     await expect(page.locator('.text-item')).toHaveText('Gradient descent minimizes loss');
     await expect(page.locator('.save-state')).toHaveText('Saved');
-    await page.getByRole('button', { name: '+ Add page' }).click();
+    // Typed text is written on the paper: it starts inside the writing column, on a rule.
+    const box = await page.locator('.text-item').boundingBox();
+    const stage = await page.locator('.page-stage').first().boundingBox();
+    expect(box!.x - stage!.x).toBeGreaterThan(40);
+    await page.locator('.thumb-add').click();
     await expect(page.locator('.page-slot')).toHaveCount(2);
     await page.reload();
     await expect(page.locator('.text-item')).toHaveText('Gradient descent minimizes loss');
     await expect(page.locator('.link-chip').first()).toContainText('L1', { timeout: 20000 });
+  });
+
+  test('typed text survives leaving while the box is still focused', async ({ page }) => {
+    await as(page, 'priya');
+    await page.getByRole('button', { name: '+ New notebook' }).click();
+    await page.getByPlaceholder(/Revision/).fill('Draft text');
+    await page.getByRole('button', { name: 'Create' }).click();
+    await expect(page.locator('.page-stage')).toHaveCount(1);
+    await page.getByRole('button', { name: 'Text' }).click();
+    await page.locator('.page-stage').click({ position: { x: 100, y: 150 } });
+    await page.keyboard.type('Leave while typing');
+    // No click elsewhere to blur: going back must flush the live draft, not the empty box.
+    await page.getByRole('button', { name: 'Back to course' }).click();
+    await page.waitForTimeout(800);
+    await page.locator('.doc-card', { hasText: 'Draft text' }).click();
+    await expect(page.locator('.text-item')).toHaveText('Leave while typing');
+  });
+
+  test('a notebook keeps its paper, and a sheet can be re-papered', async ({ page }) => {
+    await as(page, 'thomas');
+    await page.getByRole('button', { name: '+ New notebook' }).click();
+    await page.getByPlaceholder(/Revision/).fill('Grid revision');
+    await page.locator('.paper-opt.paper-grid').click();
+    await page.getByRole('button', { name: 'Create' }).click();
+    await expect(page.locator('.page-stage.paper-grid')).toHaveCount(1);
+    // The new sheet inherits the notebook's paper instead of falling back to ruled.
+    await page.locator('.thumb-add').click();
+    await expect(page.locator('.page-stage.paper-grid')).toHaveCount(2);
+    await page.reload();
+    await expect(page.locator('.page-stage.paper-grid')).toHaveCount(2);
+    // One sheet can be re-papered without losing what is on it.
+    await page.locator('.page-slot').first().locator('.page-chrome').getByRole('button', { name: /Paper: Grid/ }).first().click();
+    await page.getByRole('menuitem', { name: /Lined/ }).click();
+    await expect(page.locator('.page-stage.paper-ruled')).toHaveCount(1);
+    await page.reload();
+    await expect(page.locator('.page-stage.paper-ruled')).toHaveCount(1);
+    await expect(page.locator('.page-stage.paper-grid')).toHaveCount(1);
+  });
+
+  test('a memo is stuck onto the page, dragged, recoloured and saved', async ({ page }) => {
+    await as(page, 'thomas');
+    await page.getByRole('button', { name: '+ New notebook' }).click();
+    await page.getByPlaceholder(/Revision/).fill('Memos on a page');
+    await page.getByRole('button', { name: 'Create' }).click();
+    await expect(page.locator('.page-stage')).toHaveCount(1);
+    // A memo is an object on the note, added with its own tool — not a kind of page.
+    await page.getByRole('button', { name: /Memo: stick a note/ }).click();
+    await page.locator('.page-stage').click({ position: { x: 260, y: 220 } });
+    await page.keyboard.type('Ask in tutorial: is the denominator always the marginal?');
+    await page.locator('.editor-top').click();
+    const memo = page.locator('.memo');
+    await expect(memo).toHaveCount(1);
+    await expect(memo).toContainText('Ask in tutorial');
+    // It is the student's own writing, so it is saved like text and ink.
+    await expect(page.locator('.save-state')).toHaveText('Saved');
+    await page.reload();
+    await expect(page.locator('.memo')).toContainText('Ask in tutorial');
+    // Dragging it moves it, and a second memo takes the next tint.
+    const before = await page.locator('.memo').boundingBox();
+    await page.getByRole('button', { name: /Memo: stick a note/ }).click();
+    await page.mouse.move(before!.x + 40, before!.y + 16);
+    await page.mouse.down();
+    await page.mouse.move(before!.x + 140, before!.y + 96, { steps: 6 });
+    await page.mouse.up();
+    await page.locator('.page-stage').click({ position: { x: 620, y: 620 } });
+    await page.keyboard.type('Second memo');
+    await page.locator('.editor-top').click();
+    await expect(page.locator('.memo')).toHaveCount(2);
+    const classes = await page.locator('.memo').evaluateAll((els) => els.map((e) => e.className));
+    expect(new Set(classes.map((c) => /tint-\w+/.exec(c)?.[0])).size).toBe(2);
+    await page.reload();
+    await expect(page.locator('.memo')).toHaveCount(2);
   });
 
   test('the file tree: create, file by menu or drag, rename, delete', async ({ page }) => {
@@ -294,7 +413,7 @@ test.describe.serial('notebook workflow', () => {
   });
 
   test('front page lists all my courses; each course is its own page', async ({ page }) => {
-    await as(page, 'thomas');
+    await as(page, 'professor');
     await page.getByRole('button', { name: 'All courses' }).click();
     await page.getByRole('button', { name: '+ New course' }).click();
     await page.getByPlaceholder(/Code/).fill('HIST200');
@@ -330,6 +449,80 @@ test.describe.serial('notebook workflow', () => {
     await expect(page.locator('#lib-crumb-slot')).toContainText('ML1000/Quizzes');
   });
 
+  test('asking about a page works from the panel, without circling anything', async ({ page }) => {
+    await as(page, 'thomas');
+    await side(page, 'All files').click();
+    await page.locator('.doc-card', { hasText: 'Gradient' }).click();
+    await expect(page.locator('.page-stage').first()).toBeVisible();
+    // Ask is reachable from the panel: no lasso, no circling first.
+    await page.getByRole('button', { name: '✦ Ask' }).click();
+    const box = page.locator('.ask-chat');
+    await expect(box).toBeVisible();
+    // The one-tap questions are offered before the first question.
+    await expect(box.locator('.ask-empty .chip')).toHaveCount(3);
+    await box.locator('.ask-compose-row textarea').fill('Why does gradient descent step against the gradient?');
+    await box.getByRole('button', { name: 'Send question' }).click();
+    // An answer arrives as a message in the conversation, with its sources, and can become a note.
+    await expect(box.locator('.ask-answer').first()).toContainText('The update rule', { timeout: 30000 });
+    await expect(box.locator('.ask-answer').first().locator('.cite').first()).toBeVisible();
+    const before = await page.locator('.annotation').count();
+    await box.locator('.ask-answer').first().getByRole('button', { name: 'Add beside my notes' }).click();
+    await expect(page.locator('.annotation')).toHaveCount(before + 1);
+    // History is a real session list: a new chat clears the thread, History brings it back.
+    await box.getByRole('button', { name: 'History' }).click();
+    await expect(box.locator('.ask-history button')).toHaveCount(1);
+    await box.getByRole('button', { name: 'New chat' }).click();
+    await expect(box.locator('.ask-msg')).toHaveCount(0);
+    await box.getByRole('button', { name: 'History' }).click();
+    await box.locator('.ask-history button').first().click();
+    await expect(box.locator('.ask-msg')).toHaveCount(2);
+  });
+
+  test('the notebook browser lists every suggestion by page, with its source note', async ({ page }) => {
+    // A classmate writes first on slide 1, so Priya sees a peer suggestion rather than her own note.
+    await as(page, 'alex');
+    await openLecture(page);
+    await draw(page, 0);
+    await expect(page.locator('.save-state')).toHaveText('Saved');
+    await page.getByRole('button', { name: 'Back to course' }).click();
+    // Priya, on slides no earlier test has written on: an answered gap is settled for good.
+    await as(page, 'priya');
+    await openLecture(page);
+    await draw(page, 0);
+    await expect(page.locator('.page-slot').nth(0).locator('.inline-ghost')).toBeVisible({ timeout: 60000 });
+    await draw(page, 2);
+    await expect(page.locator('.page-slot').nth(2).locator('.inline-ghost')).toBeVisible({ timeout: 60000 });
+    await page.getByRole('button', { name: '✦ Ask' }).click();
+    // Suggestions are their own tab; the notebook browser is a scope inside it.
+    await page.getByRole('tab', { name: 'Suggestions' }).click();
+    await page.getByRole('tab', { name: 'Whole notebook' }).click();
+    const browse = page.locator('.nb-browse');
+    await expect(browse).toBeVisible();
+    // Grouped by page, in the notebook's order, each row saying what and from where.
+    await expect(browse.locator('.nb-group')).toHaveCount(2);
+    await expect(browse.locator('.nb-group-head').first()).toContainText('Slide 1');
+    await expect(browse.locator('.nb-row').first()).toContainText('The step after the gradient.');
+    await expect(browse.locator('.nb-row').first()).toContainText('From');
+    // Opening one shows the suggestion and, when it comes from a classmate, the note behind it.
+    await browse.locator('.nb-row').first().click();
+    await expect(browse.locator('.nb-detail')).toBeVisible();
+    // The detail shows the suggestion's own text — verbatim for a single classmate's note — and,
+    // when the suggestion traces to one note, a crop of the handwriting it came from.
+    await expect(browse.locator('.nb-detail')).toContainText(/Missing step|The update rule|Subtract/);
+    const hasSource = await browse.locator('.nb-source img').count();
+    if (hasSource) await expect(browse.locator('.nb-source img').first()).toBeVisible();
+    // "Add to that page" merges it on the page it belongs to, not the one being read.
+    const currentPage = await page.locator('.thumb.active .thumb-num').textContent();
+    await browse.getByRole('button', { name: 'Add to that page' }).click();
+    await expect(browse.locator('.nb-item')).toHaveCount(1);
+    // Adding to another page is like adding a file to context: the page being read does not move.
+    await expect(page.locator('.thumb.active .thumb-num')).toHaveText(currentPage!);
+    await expect(page.locator('.page-slot').nth(0).locator('.annotation')).toBeVisible();
+    // "Go to page" moves the notebook to that page.
+    await browse.getByRole('button', { name: 'Go to page' }).first().click();
+    await expect(page.locator('.panel-tabs')).toBeVisible();
+  });
+
   test('works at phone width', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await as(page, 'thomas');
@@ -341,11 +534,127 @@ test.describe.serial('notebook workflow', () => {
     await expect(page.locator('.lib-side')).not.toBeInViewport();
     await page.locator('.doc-card', { hasText: 'Gradient' }).click();
     await expect(page.locator('.page-stage').first()).toBeVisible();
-    await page.getByRole('button', { name: '✦ Study' }).click();
+    await page.getByRole('button', { name: '✦ Ask' }).click();
     await expect(page.locator('.panel')).toBeVisible();
     await page.getByRole('button', { name: 'Close panel' }).click();
     await expect(page.locator('.panel')).toHaveCount(0);
   });
+  test('the inline suggestion answers the keyboard: Escape hides it and adds nothing', async ({ page }) => {
+    // Last, because it writes on Priya's deck and an earlier test needs it untouched.
+    await as(page, 'priya');
+    await openLecture(page);
+    await draw(page, 1);
+    await expect(page.locator('.save-state')).toHaveText('Saved');
+    const ghost = page.locator('.page-slot').nth(1).locator('.inline-ghost');
+    await expect(ghost).toBeVisible({ timeout: 60000 });
+    // Escape puts it away without adding anything.
+    await ghost.focus();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('.page-slot').nth(1).locator('.inline-ghost')).toHaveCount(0);
+    await expect(page.locator('.annotation')).toHaveCount(0);
+    // Escape is not a judgement: the suggestion is back next time the page is opened.
+    await page.reload();
+    await expect(page.locator('.page-slot').nth(1).locator('.inline-ghost')).toBeVisible({ timeout: 60000 });
+  });
+
+  test('a named copy arrives, then the same note becomes a group note', async ({ page }) => {
+    await as(page, 'alex');
+    await page.getByRole('button', { name: '+ New notebook' }).click();
+    await page.getByPlaceholder(/Revision/).fill('Share practice');
+    await page.getByRole('button', { name: 'Create' }).click();
+    await expect(page.locator('.nb-title')).toHaveValue('Share practice');
+    await draw(page, 0);
+    await expect(page.locator('.save-state')).toHaveText('Saved');
+
+    await page.getByRole('button', { name: 'Share', exact: true }).click();
+    const share = page.getByRole('dialog');
+    await expect(share).toContainText('Send a copy');
+    await share.locator('.share-person', { hasText: 'Thomas' }).click();
+    await share.getByRole('button', { name: 'Send 1 copy' }).click();
+    await expect(page.locator('.toast')).toContainText('Sent a pullable copy');
+
+    // The recipient gets a named notice, opens the copy, and sees the sender's ink.
+    await home(page, 'thomas');
+    const notice = page.getByRole('dialog', { name: 'A note was shared with you' });
+    await expect(notice).toBeVisible({ timeout: 12000 });
+    await notice.getByRole('button', { name: 'Open' }).click();
+    await expect(page.locator('.nb-title')).toHaveValue('Alex · Share practice');
+    await expect(inkPaths(page, 0)).toHaveCount(1);
+    // The copy is in the recipient's Shared with me folder.
+    await page.getByRole('button', { name: 'Back to course' }).click();
+    await side(page, 'Shared with me').click();
+    await expect(page.locator('.doc-card', { hasText: 'Alex · Share practice' })).toBeVisible();
+
+    // The sender's original is untouched by the copy.
+    await as(page, 'alex');
+    await side(page, 'All files').click();
+    await page.locator('.doc-card', { hasText: 'Share practice' }).click();
+    await expect(inkPaths(page, 0)).toHaveCount(1);
+
+    // Invite the same classmate to co-edit the original note.
+    await page.getByRole('button', { name: 'Share', exact: true }).click();
+    const invite = page.getByRole('dialog');
+    await invite.getByRole('tab', { name: 'Invite to co-edit' }).click();
+    await invite.locator('.share-person', { hasText: 'Thomas' }).click();
+    await invite.getByRole('button', { name: 'Invite to co-edit' }).click();
+    await expect(page.locator('.toast')).toContainText('Invited 1 classmate');
+
+    await home(page, 'thomas');
+    const invitation = page.getByRole('dialog', { name: 'Co-edit invitation' });
+    await expect(invitation).toBeVisible({ timeout: 12000 });
+    await invitation.getByRole('button', { name: 'Join' }).click();
+    await expect(page.locator('.nb-title')).toHaveValue('Share practice');
+    await draw(page, 0, [340, 60], [560, 150]);
+    await expect(page.locator('.save-state')).toHaveText('Saved');
+
+    // The owner sees the classmate's stroke arrive and the note reads as a group note.
+    await as(page, 'alex');
+    await side(page, 'All files').click();
+    await expect(page.locator('.doc-card', { hasText: 'Share practice' }).locator('.group-badge')).toContainText('Group · 2');
+    await page.locator('.doc-card', { hasText: 'Share practice' }).click();
+    await expect(inkPaths(page, 0)).toHaveCount(2, { timeout: 10000 });
+  });
+
+  test('the professor goes live, and the class receives a pullable handout', async ({ page }) => {
+    await as(page, 'professor');
+    await openedFolder(page, 'Lectures');
+    await page.locator('.doc-card', { hasText: 'Gradient descent' }).click();
+    await expect(page.locator('.page-stage').first()).toBeVisible();
+    await draw(page, 0);
+    await expect(page.locator('.save-state')).toHaveText('Saved');
+    await page.getByRole('button', { name: 'Share', exact: true }).click();
+    const share = page.getByRole('dialog');
+    await share.getByRole('tab', { name: 'Go live' }).click();
+    await share.getByRole('button', { name: 'Start live' }).click();
+    await expect(page.locator('.live-banner')).toContainText('Live to the class');
+
+    // A student sees the live pill, watches the page, then gets the handout after the session.
+    await home(page, 'thomas');
+    const pill = page.locator('.live-pill');
+    await expect(pill).toBeVisible({ timeout: 12000 });
+    await pill.click();
+    await expect(page.locator('.live-view')).toBeVisible();
+    await expect(page.locator('.live-view img')).toBeVisible();
+    await page.getByRole('button', { name: 'Close live handout' }).click();
+
+    // The professor ends from the reopened notebook; the live banner is restored on load.
+    await as(page, 'professor');
+    await openedFolder(page, 'Lectures');
+    await page.locator('.doc-card', { hasText: 'Gradient descent' }).click();
+    await expect(page.locator('.live-banner')).toContainText('Live to the class', { timeout: 8000 });
+    // End while the last stroke is still inside the autosave debounce; the handout must include it.
+    await draw(page, 0, [420, 240], [620, 300]);
+    await page.getByRole('button', { name: 'End live' }).click();
+    await expect(page.locator('.toast')).toContainText('Live ended');
+
+    await home(page, 'thomas');
+    const notice = page.getByRole('dialog', { name: 'A note was shared with you' });
+    await expect(notice).toBeVisible({ timeout: 12000 });
+    await notice.getByRole('button', { name: 'Open' }).click();
+    await expect(page.locator('.nb-title')).toHaveValue('Professor · L1 · Gradient descent');
+    await expect(inkPaths(page, 0)).toHaveCount(2);
+  });
+
   test('a note judged wrong is hidden from classmates and explained to its author', async ({ page, request }) => {
     await as(page, 'thomas');
     await openLecture(page);
@@ -359,12 +668,15 @@ test.describe.serial('notebook workflow', () => {
     await openLecture(page);
     await draw(page, 1);
     await expect(page.locator('.save-state')).toHaveText('Saved');
-    await expect.poll(async () => page.locator('.gap-marker').count(), { timeout: 60000 }).toBeGreaterThan(0);
-    await page.locator('.gap-marker').first().click();
+    // The suggestion arrives inline; "Full note" opens the card, which is where reporting lives.
+    const ghost = page.locator('.inline-ghost').first();
+    await expect(ghost).toBeVisible({ timeout: 60000 });
+    await page.locator('.ghost-more').first().click();
+    await page.getByRole('menuitem', { name: 'Full note' }).click();
     const card = page.locator('.suggest-card').first();
     // Wait for the card to be the classmate's note, not the slide fallback: only a peer card
     // carries an entry, and only an entry can be reported.
-    await expect(card.locator('.suggest-src')).toContainText(/From \d+ classmates?' notes?/, { timeout: 60000 });
+    await expect(card.locator('.suggest-credit')).toContainText(/From \d+ classmates?' notes?/, { timeout: 60000 });
     await card.getByRole('button', { name: 'More actions' }).click();
     await page.locator('.suggest-menu').getByRole('menuitem', { name: 'Looks wrong' }).click();
     // The author sees an amber marker and, in the panel, the reason — nobody else sees a flag.

@@ -5,6 +5,7 @@ import { BootContext } from './boot';
 import { Library } from './Library';
 import { Home } from './Home';
 import { Editor } from './editor/Editor';
+import { NoticeCenter } from './NoticeCenter';
 import { lastLibrary, lastPage } from './ui';
 
 /**
@@ -130,7 +131,7 @@ export function App() {
               <span className="avatar" style={{ background: me?.color }}>
                 {me?.initials}
               </span>
-              <select value={me?.id} onChange={(e) => switchStudent(e.target.value)} aria-label="Demo student">
+              <select value={me?.id} onChange={(e) => switchStudent(e.target.value)} aria-label="Demo account">
                 {boot.students.map((s) => (
                   <option key={s.id} value={s.id}>
                     {s.name}
@@ -167,6 +168,7 @@ export function App() {
             onToast={setToast}
           />
         )}
+        <NoticeCenter key={`notices:${student}`} onOpenNotebook={(id) => go({ nb: id })} onToast={setToast} />
         {toast && (
           <div className="toast" role="status" onClick={() => setToast(null)}>
             {toast}

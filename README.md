@@ -1,82 +1,277 @@
-# Notebook — a course notebook that quietly learns from your classmates
+# Notebook
 
-Take notes the way you already do: write on lecture slides with a pen or mouse, type, paste images, or import notes exported from Goodnotes/Flexcil. While you write, Notebook reads each page with a multimodal model and links it to the right lecture and slide. When you leave a notebook, the notes on its slides are merged into a shared **course knowledge base**: notes that make the same point become one summary, and a note that only one classmate wrote is kept verbatim.
+A local-first course notebook that reads what you write, links it to the right lecture slide, and quietly offers what classmates understood — without ever showing you a wall of other people's notes.
 
-Nobody sees a wall of other people's handwriting. A small marker appears beside the page where your own notes leave something out, and tapping it opens a card in place — what a classmate understood, what the slide says, or an explanation — with a neutral source line and no reliability labels. Nothing changes your notes unless you add it, and sharing is automatic: the demo deliberately has no "stop sharing".
+Write on slides with a pen, type, paste images, or import a Goodnotes/Flexcil export. A multimodal model transcribes the page, finds the slide it belongs to, and a background job merges the class's notes into a **course knowledge base**. Suggestions arrive inline beside the gap they fill. Named sharing is separate: send a classmate an editable copy, co-edit a group note, or go live as the professor.
 
-![Classmate note beside a slide](docs/screenshots/classmate-note.png)
+![The course library](docs/screenshots/library.png)
 
-## Features
+This repository is the working prototype for **EMIA2020 Fall 2026 — Smart Education**. It is a demo, not a production LMS: no authentication, one SQLite file, and the server only listens on loopback.
 
-- **Courses first**: the front page lists all your courses (cover, lectures, notebooks, classmates, last edit) plus other courses to join, and lets you create one. Opening a course goes to its file tree (`#course=<id>`); the top bar shows `Notebook / COMP2211`, and leaving a notebook returns to where it was opened. Lectures, notebooks, the knowledge base and suggestions are all scoped to the course, and notes are only shared with students enrolled in it.
-- **One free file tree per course**: folders anywhere, files moved by long-press/right-click (`Move to…`) or drag, and two ordinary starting folders, **Lectures** and **Quizzes**, which you can rename or delete. **My notes** (files you have written on) and **All files** are smart views above the tree, not folders. Official decks are ordinary files: they keep their `L#` and `PDF` badge and a ✎ count wherever they are filed, and opening one is what creates your own copy.
-- **Notebook editor**: pressure-sensitive pen, highlighter, stroke eraser, lasso (select, move, delete, explain), text boxes, images, undo/redo, zoom, stylus-only mode for tablets, page thumbnails, insert pages after any slide, autosave with revision checks.
-- **Course knowledge base**: shortly after you leave a notebook, its slides' notes are grouped into points of knowledge, with an AI-written summary per group; a single classmate's note is shown verbatim, never rewritten. Sources are never listed — cards say *From 3 classmates' notes*, *From slide 12*, or *AI explanation*. A note that contradicts the slide is excluded from every prompt and suggestion, and its author sees why.
-- **Automatic sharing, no controls**: joining or creating a course explains that notes are shared, and there is deliberately no Stop sharing or Manage sharing in the demo. Items the model could not read or link stay private, with the reason shown to their author.
-- **Inline suggestions**: a small marker appears beside the page where something is missing; tapping it opens a card in place, with *Add to my notes* (a separate sticky note) and *Dismiss* (remembered), plus *Not helpful* and *Looks wrong* (which rechecks the note and hides it while that is decided). Nothing covers the page, and the panel stays closed unless you open it.
-- **Circle to ask**: lasso a part and get a popover beside it with *Explain*, *Example*, *Why?* chips and an optional typed question; the answer appears in the same popover with its sources.
-- **Quiz me** is a future plan, not part of the demo (see [Future plan](#future-plan-quiz-me)).
+## Contents
 
-No retrieval index: a lecture's slide digests and its knowledge-base entries fit easily in DeepSeek's 1M-token context window, so each request sends the whole lecture context. See `docs/superpowers/specs/2026-11-04-knowledge-base-inline-suggestions.md` (current) and `2026-11-02-notebook-v2-design.md` (editor).
+- [What you need](#what-you-need)
+- [Quick start](#quick-start)
+- [Environment variables](#environment-variables)
+- [Demo accounts](#demo-accounts)
+- [Everyday commands](#everyday-commands)
+- [How the app works](#how-the-app-works)
+- [Project layout](#project-layout)
+- [Testing](#testing)
+- [Working together](#working-together)
+- [Troubleshooting](#troubleshooting)
+- [Local production and deployment](#local-production-and-deployment)
+- [Known limits](#known-limits)
+- [Where to read next](#where-to-read-next)
 
-## Run
+## What you need
 
-Requires Node ≥ 24 and poppler-utils (`pdftoppm`, `pdftotext`, `pdfinfo`).
+| Requirement | Notes |
+| --- | --- |
+| **Node.js 24+** | The repo pins engines to `>=24`. Use the checked-in `package-lock.json`. |
+| **npm** | `npm ci` is the supported install; do not commit `node_modules/`. |
+| **poppler-utils** | `pdftoppm`, `pdftotext` and `pdfinfo` turn lecture PDFs into page images and text. |
+| **Python 3** | Only needed when seeding from a `.zip` (the seed uses `zipfile` to extract the PDFs). |
+| **A DeepSeek API key** | Optional to start the app, required for digests, transcription, suggestions, Ask and quizzes. The official endpoint and `deepseek-flash` are the defaults. |
+| **Playwright Chromium** | Optional, only for the browser tests. `npx playwright install chromium` if the default browser is missing. |
+
+On Debian/Ubuntu:
 
 ```bash
+sudo apt-get install poppler-utils python3
+```
+
+The course material is **not** in this repository. The COMP2211 PDFs are large and are not ours to redistribute. You can seed with any folder of lecture PDFs you are allowed to use, or create a course in the app as the Professor and upload decks there.
+
+## Quick start
+
+```bash
+git clone https://github.com/Thomas-Zheng0910/EMIA2020-Fall2026-smart-education.git
+cd EMIA2020-Fall2026-smart-education
+
 npm ci
-cp .env.example .env          # set LLM_API_KEY (official DeepSeek, model deepseek-flash)
-npm run seed -- "Flexcil PDFs 2026-11-01 23.58.58.zip"   # or a folder of PDFs
-npm run dev                   # http://127.0.0.1:5173
+cp .env.example .env
+# Edit .env and set LLM_API_KEY. Leave it empty to run without AI.
 ```
 
-To add another course: `npm run seed -- <folder-or-zip> --code COMP3311 --name "Database Management Systems"` (files named `N-title.pdf` become lecture N; `*notes.pdf` becomes Alex's notebook), or create it in the app and add lecture PDFs there.
-
-The seed imports `N-*-full.pdf` lectures and `supp-model-evaluation-full.pdf`, digests every slide with the model, and imports `COMP2211 notes.pdf` as **Alex's** handwritten notebook (indexed and shared). Switch the demo student at the top right: **Thomas** (you), **Alex** (has notes), **Priya** (empty). Demo identities are not authentication; the server binds to loopback.
-
-Production: `npm run build && npm start` serves the built app on port 4310. `npm run serve` does the same but watches: server edits restart the API and client edits rebuild `dist/`, which is how the hosted demo stays current without a deploy step. `npm run dev:local` (4312/5174) keeps a dev server out of the way of one already on 4310.
-
-The knowledge base fills itself in: leave a notebook (or wait for the 10-minute sweep) and that lecture's slides are merged, one model call per changed slide. On a freshly seeded database suggestions start from the slides alone until somebody's notes have been merged.
-
-## Test
+Start the app:
 
 ```bash
-npm run check                 # unit/API tests (mock model) + typecheck + production build
-npm run test:e2e              # Playwright, with a deterministic mock OpenAI server (never calls the live API)
-node scripts/live-smoke.mjs   # optional: real DeepSeek smoke run against a running dev server with seeded data
+npm run dev
 ```
 
-If the default Playwright browser is missing, set `PLAYWRIGHT_CHROMIUM_EXECUTABLE` to a cached Chromium (e.g. `~/.cache/ms-playwright/chromium_headless_shell-1248/chrome-headless-shell-linux-arm64/chrome-headless-shell`) or run `npx playwright install chromium`.
+Open **http://127.0.0.1:5173**. The Vite client proxies `/api` to the Fastify API on `127.0.0.1:4310`. Both halves watch: edits to `src/` reload the browser, edits to `server/` restart the API.
 
-Current: 22 unit/API tests and 10 browser scenarios. Both suites use the mock model, so they prove transport and control flow, never model quality.
+If port 4310 is already taken (for example by the hosted demo), run the isolated pair instead:
 
-## Layout
+```bash
+npm run dev:local        # client :5174, API :4312
+```
 
-- `server/` — Fastify API (`app.ts`), SQLite store with the knowledge base, gaps and topic tables (`db.ts`), model gateway (`ai.ts`), PDF rendering (`pdf.ts`), page rendering/cropping (`render.ts`), background jobs: digests, topics, indexing with gap detection, merge-and-check, sweeps (`jobs.ts`), a page's gaps resolved to cards (`suggestions.ts`), Ask / fill-gap / Quiz with citation validation (`study.ts`), imports (`importer.ts`), seed CLI (`seed.ts`).
-- `shared/` — types (`Folder`, `Deck`, `CourseFiles`, `KnowledgeEntry`, `Suggestion`, `OwnNote`, `LectureTopic`) and ink geometry (perfect-freehand), used by both client and server.
-- `src/` — React app: `Library.tsx` (the file tree), `editor/` (Editor, PageView, Toolbar, PageChrome, margin markers), `panel/` (`Panel.tsx`: suggestions list, inline card, lasso popover; `SourceViewer.tsx`), `gestures.ts` (long-press, drag, file drop).
-- `scripts/serve.mjs` — the supervisor behind `npm run serve`; restarts the service if the API stops answering.
+### Seed the demo course
 
-## Future plan: Quiz me
+The seed imports lecture PDFs, renders their slides, asks the model to digest each slide, and imports a handwritten notebook for Alex. It needs a folder (or a Flexcil-style `.zip`) containing PDFs named like this:
 
-Agreed with the user on 4 Nov 2026. **Not part of the demo.** The demo focuses on the course file tree, the shared course knowledge base and inline suggestions. Quiz me will be built later and leaves the study panel.
+| File name | Becomes |
+| --- | --- |
+| `1-intro.pdf`, `2-python.pdf`, … | Lecture 1, 2, … |
+| `12-ethics.pdf` | Lecture 12 |
+| `COMP2211 notes.pdf` | Alex's handwritten notebook |
+| `supp-model-evaluation-full.pdf` | Lecture 12 supplement (COMP2211 only) |
 
-The `POST /api/quizzes` and `/api/quizzes/:id/grade` routes are still in place (and tested), so the future UI has something to call, but no screen in the demo reaches them.
+Files without a leading number (and not ending in `notes.pdf`) are ignored. Rename your PDFs to match, or add the course through the app instead.
 
-- **Entry**: a shortcut in the editor (circle a part → "Quiz me on this", or a header button) opens a quiz builder for the course. It is not a tab in the study panel.
-- **Material**: the student picks any files in the course: lecture PDFs (official slides), their own notebooks or pages, imported PDFs, and earlier quiz results. Only the picked files are used; classmates' knowledge is not added automatically.
-- **Grounding**: questions are built only from the picked files. Every correct answer must cite one of the supplied materials (validated server-side); uncited questions are dropped. All sources count equally: if a note disagrees with a slide, the quiz tests what the files say. This replaces the earlier rule (still enforced by the current routes) that answers must be supported by an official slide.
-- **Question types**: multiple choice (graded locally) and short answer (typed), graded by the model against the cited material, with feedback on what is missing.
-- **Flow**: choose how many questions; answer one at a time with immediate feedback and source links.
-- **Results are files**: each quiz session is saved automatically in the course's **Quizzes** folder (an ordinary folder, so students can rename, move or delete it). Internally it is stored in a format the model can read (so a past quiz can be material for a new one); in the library the student opens it to review the session: questions, their answers, score and feedback.
-- **Memory**: attempts are kept; per-topic results support "Retry my mistakes" and weak-spot quizzes. Topics come from the lecture topic index.
-- **Depends on**: the course file tree (with its Lectures and Quizzes folders) and the lecture topic index — both built; topics are on every lecture payload.
-- **Still open**: whether a retake adds an attempt to the same quiz file or creates a new one, and how per-topic progress is shown.
+```bash
+npm run seed -- /path/to/lecture-pdfs
+# or, for a Flexcil export:
+npm run seed -- "/path/to/Flexcil export.zip"
 
-## Limits
+# Another course:
+npm run seed -- /path/to/pdfs --code COMP3311 --name "Database Management Systems" --description "…"
+```
 
-- **The knowledge base is one model's judgement, unreviewed.** Grouping notes into a point, summarising them, and deciding that a note contradicts the slide are all single-shot outputs. A "Looks wrong" report hides an entry from every student on that verdict alone, so false disputes are the risk to watch before this meets a real class.
-- Entries are built per slide, so one idea spread across slides becomes two of them.
-- Merging happens when a student leaves a notebook (or on the 10-minute sweep), so a tab left open is not visible to classmates yet.
-- Model quality (handwriting transcription, slide linking, gap detection, explanations) has been spot-checked on the real COMP2211 material, not evaluated with students. Tablet behaviour is verified only in browser emulation, never on a physical iPad.
-- Single-machine SQLite, no auth, no multi-device sync, no LMS integration. The demo shares notes automatically and does not let a student stop sharing; author control returns in the future plan.
+Seeding is slow on purpose: every slide is a model call. The seed prints `digested X/Y slides` every 15 seconds; a full 13-lecture, 636-slide COMP2211 seed takes roughly 25 minutes on the live model. Without `LLM_API_KEY`, slides are imported but not digested, and AI features return a clear "AI not configured" error.
+
+You do not have to seed to look around. Start the app, switch to **Professor** in the top-right menu, create a course, and upload PDFs from the course page. A freshly seeded database starts with suggestions based on the official slides only; the knowledge base fills in after someone leaves a notebook (or after the 10-minute sweep).
+
+### Reset the database
+
+Stop the dev server, then remove the runtime data directory and seed again:
+
+```bash
+rm -rf data
+npm run seed -- /path/to/lecture-pdfs
+```
+
+`data/` contains the SQLite database, uploaded PDFs, rendered slide images and logs. Everything in it is disposable and ignored by git.
+
+## Environment variables
+
+Copy `.env.example` to `.env`. The file is git-ignored; never commit a key.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `LLM_BASE_URL` | `https://api.deepseek.com/v1` | OpenAI-compatible endpoint. |
+| `LLM_API_KEY` | empty | Provider key. Empty means "AI not configured", not a crash. |
+| `LLM_MODEL` | `deepseek-flash` | Must be multimodal (the app sends page images). |
+| `PORT` | `4310` | API port. Vite proxies to this unless `API_PORT` is set. |
+| `DATA_DIR` | `./data` | SQLite, uploads, rendered pages. Keep it out of git. |
+| `INDEX_DELAY_MS` | `6000` | Pause after writing before a page is re-read and shared. |
+| `ALLOWED_ORIGINS` | empty | Extra exact origins allowed to call the API (comma-separated), e.g. a Cloudflare Tunnel hostname. |
+
+The e2e suite overrides the LLM variables with its own mock server. It never calls the live provider.
+
+## Demo accounts
+
+There is no login. Switch identity from the avatar menu in the top right.
+
+| Account | Role | Use it for |
+| --- | --- | --- |
+| **Thomas** | Student | The default student view. Has some writing on lecture 2. |
+| **Alex** | Student | Owns the imported `COMP2211 notes.pdf` notebook and its shared fragments. |
+| **Priya** | Student | Empty student, useful for checking a first-run experience. |
+| **Professor** | Instructor of COMP2211 | Create courses, add official decks, re-digest slides, go live. |
+
+These identities are **not authentication**. The API accepts an `x-student-id` header, and the server binds to `127.0.0.1`; keep it that way. Course-scoped routes also require `x-course-id` and check enrollment, so do not test sharing by bypassing the headers.
+
+## Everyday commands
+
+| Command | What it does |
+| --- | --- |
+| `npm run dev` | Client + API with watch, `:5173` → `:4310`. |
+| `npm run dev:local` | Same, on `:5174` → `:4312`, when `:4310` is busy. |
+| `npm run seed -- <folder-or-zip>` | Import lectures and Alex's notebook. |
+| `npm run build` | Typecheck and build the client into `dist/`. |
+| `npm start` | Serve the built app and API on `:4310` (reads `.env`). |
+| `npm run serve` | Watch-and-rebuild supervisor used by the hosted demo. |
+| `npm test` | Unit/API tests with the mock model. |
+| `npm run test:e2e` | Playwright browser scenarios on their own ports. |
+| `npm run check` | `npm test` + typecheck + production build. Run before opening a PR. |
+| `node scripts/live-smoke.mjs` | Optional smoke run against the real provider (costs API calls). |
+
+## How the app works
+
+```text
+Browser: React 19 + Vite
+   │  /api (fetch)
+   ▼
+Fastify API (server/)
+   ├─ SQLite + files in data/       courses, enrollments, notebooks, pages, ink, shares
+   ├─ background jobs               slide digests, page indexing, merge-and-check, sweeps
+   └─ ModelGateway (server/ai.ts)    DeepSeek, multimodal
+```
+
+1. **Courses and the library.** Every course has its own file tree. A student joins a course rather than creating a folder. Two ordinary folders, **Lectures** and **Quizzes**, are seeded once per student per course; **My notes** and **All files** are smart views, not folders. All reads and writes are scoped by `x-course-id` + enrollment.
+2. **Writing.** The editor stores vector ink and page items. Autosave sends a revision with each page; a stale write is rejected rather than overwriting a classmate. Typing is saved while you type, so leaving the page never saves an empty box.
+3. **Indexing.** After a pause (or when the notebook is closed), the server renders the page plus an ink-only image and asks the model to transcribe it, link it to a slide, and judge whether it is clear and adds something. Only confident, linked notes are shared (`SHARE_THRESHOLD`). Results are written only if the page revision has not changed; annotation-only edits do not trigger a model call.
+4. **The knowledge base.** When a student leaves a notebook, `server/jobs.ts` groups each slide's notes into `knowledge_entries` with an AI summary. Single-source entries keep the note verbatim. Entries that contradict the slide are excluded from prompts and suggestions. Sources are never listed to students, and classmates are never named.
+5. **Suggestions and Ask.** Prompts send the whole lecture (slide digests + visible classmate knowledge) — there is no RAG or embedding index by design. Model citations are validated server-side against the references actually supplied. Suggestions appear inline at the gap in the writing column; accepting one adds a separate `annotation` item and never rewrites the student's ink.
+6. **Named sharing.** **Send a copy** gives one classmate a pullable or snapshot copy in **Shared with me**. **Invite to co-edit** turns a note into a group note with owner/editor members and object-level merge. **Go live** is the professor's read-only handout; ending it leaves every student a copy. Direct shares are raw and named, and they are never ingested into the anonymous AI bank.
+
+Read `AGENTS.md` before changing behavior. It records the invariants the code depends on: course isolation, AI never modifying student ink, annotation-only edits not re-triggering indexing, the anonymous bank staying separate from named shares, and no fabricated AI output when the provider is missing.
+
+## Project layout
+
+```text
+server/            Fastify API and background work
+  app.ts             routes, auth headers, static client
+  db.ts              SQLite schema + queries (additive migrations on start)
+  ai.ts              model gateway; env config
+  jobs.ts            digests, topic index, page indexing, merge-and-check, sweeps
+  suggestions.ts     page gaps → suggestion cards
+  study.ts           Ask, fill-gap, quiz, citation validation
+  shares.ts          copies, pull/fetch, group notes, live handouts
+  importer.ts        lecture PDFs, notebook PDFs, uploads
+  render.ts          page renders, ink-only renders, handwriting crops
+  seed.ts            CLI seed and demo identities
+  index.ts           process entry point
+shared/            types and ink geometry shared by client and server
+src/               React client
+  Home.tsx           course list / join / create
+  Library.tsx        file tree, folders, drag and long-press menus
+  editor/            Editor, PageView, Toolbar, PageChrome, autosave
+  panel/             Ask, Suggestions, inline card, source viewer
+  ShareDialog.tsx    send a copy / invite / go live
+  NoticeCenter.tsx   received copies and invitations
+  LiveViewer.tsx     read-only live handout
+  styles.css         the whole visual system
+tests/             unit/API tests (Vitest)
+e2e/               Playwright scenarios + mock LLM (never the live API)
+docs/              specs, handoff, progress, validation, screenshots
+scripts/           live smoke and the serve supervisor
+data/              runtime data (ignored)
+```
+
+## Testing
+
+```bash
+npm run check        # unit/API tests + typecheck + production build
+npm run test:e2e     # Playwright, with e2e/mock-llm.mjs
+```
+
+The mock provider proves transport and control flow; it does **not** prove model quality. Model behaviour needs representative inputs and human review. Never point the automated tests at the live provider.
+
+If Playwright cannot find a browser, either run `npx playwright install chromium` or set `PLAYWRIGHT_CHROMIUM_EXECUTABLE` to an existing Chromium binary. The e2e run uses its own ports (`:5174` / `:4311`), so it can run while a dev server is up.
+
+A live smoke test is explicit and optional:
+
+```bash
+node scripts/live-smoke.mjs   # against a running, seeded server; costs API calls
+```
+
+## Working together
+
+- **Branch from `main`.** Use `feat/<short-name>` or `fix/<short-name>`. Open a PR with what changed, why, and how you tested it. Keep unrelated refactors out of feature PRs.
+- **Pull, then `npm ci`.** The lockfile is the source of truth. Do not upgrade dependencies in a feature PR unless that is the point of the PR.
+- **Run `npm run check` before pushing.** If you touched the editor, sharing, or any API route, also run `npm run test:e2e`.
+- **Never commit** `.env`, `data/`, `dist/`, `node_modules/`, `test-results/`, lecture PDFs/zips, or generated screenshots from `.oil-ui/`. They are git-ignored; if a new runtime artifact appears, add it to `.gitignore` instead of committing it.
+- **Schema changes are additive.** Existing databases are upgraded on start; do not rewrite or drop tables that hold student work. Test with an old `data/notebook.sqlite` if you touch `db.ts`.
+- **Update the docs with the behavior.** `AGENTS.md` holds invariants, `docs/superpowers/specs/` holds the current design, and `docs/HANDOFF.md` / `docs/PROGRESS.md` record what was done. If you change a flow, update the relevant note or explain why it no longer applies.
+- **Respect the product decisions.** The demo shares notes automatically and has no Stop sharing for the AI bank. Named shares are not revocable. The professor's notes and group notes are not peer evidence. AI suggestions never name a classmate; direct shares do. These are deliberate, not bugs.
+- **Keep the demo loopback-only.** The identities are fictional, but the API trusts headers. Do not expose it on a LAN without a real auth layer in front.
+
+## Troubleshooting
+
+| Symptom | Fix |
+| --- | --- |
+| `EADDRINUSE` on 4310 | Something (often the hosted demo) already owns the port. Use `npm run dev:local`, or stop the other process. |
+| `pdftoppm: not found` while seeding | Install `poppler-utils` and reopen the shell. |
+| `AI not configured` on every AI action | Set `LLM_API_KEY` in `.env` and restart the server. Seeding without a key imports slides but produces no digests. |
+| Seeding looks stuck | It is making one model call per slide. Watch the `digested X/Y` line; the 15-second tick can hide slow calls. |
+| No course after a reset | Run the seed again, or start the app and create one as **Professor**. |
+| Playwright browser missing | `npx playwright install chromium`, or set `PLAYWRIGHT_CHROMIUM_EXECUTABLE`. |
+| Blank pages after deleting `data/` while the app was running | Stop the app first, delete `data/`, restart, and seed. SQLite and rendered files must disappear together. |
+| A public hostname gets a CORS error | Add the exact `https://…` origin to `ALLOWED_ORIGINS` and restart. |
+| Tests suddenly call the real API | They should not. Check that you did not remove the `env` override in `playwright.config.ts`; the mock lives in `e2e/mock-llm.mjs`. |
+
+## Local production and deployment
+
+Build the client and serve the whole app from the API process:
+
+```bash
+npm run build
+npm start                 # http://127.0.0.1:4310
+```
+
+`npm run serve` is the watch-mode supervisor used by the hosted demo: server edits restart the API and client edits rebuild `dist/`. `deploy/notebook.service` is the user-systemd unit template; `docs/DEPLOYMENT.md` documents the Cloudflare Tunnel setup for `notebook.zh-thomas.party`.
+
+For a normal local demo, `npm run dev` is enough. Do not deploy the current app to a public host without adding authentication: every request may choose a demo identity.
+
+## Known limits
+
+- **Demo, not a LMS.** Single-machine SQLite, no real accounts, no multi-device sync, no LMS integration.
+- **AI judgement is unreviewed.** Grouping notes, summarising them, and deciding a note contradicts the slide are single-shot model outputs. Spot-checked on COMP2211, not evaluated with a class.
+- **No RAG by design.** The whole lecture fits in the context window; there is no embedding index to tune or inspect.
+- **Co-editing is poll-based.** Object-level merge every 2.5 s and presence every 5 s, not CRDT or WebSocket. Simultaneous typing in one text box is last-write-wins.
+- **Sharing is not revocable.** The AI bank is automatic, and named shares/copies cannot be recalled in the demo.
+- **Quiz me is a future plan.** The `POST /api/quizzes` routes exist and are tested, but no demo screen reaches them.
+- **No bundled course material.** Bring PDFs you are allowed to use.
+
+## Where to read next
+
+- [`AGENTS.md`](AGENTS.md) — invariants and user decisions; read this before changing behavior.
+- [`docs/superpowers/specs/2026-11-02-notebook-v2-design.md`](docs/superpowers/specs/2026-11-02-notebook-v2-design.md) — editor, library, paper.
+- [`docs/superpowers/specs/2026-11-04-knowledge-base-inline-suggestions.md`](docs/superpowers/specs/2026-11-04-knowledge-base-inline-suggestions.md) — knowledge base, suggestions, Ask.
+- [`docs/superpowers/specs/2026-11-05-sharing-live-and-group-notes.md`](docs/superpowers/specs/2026-11-05-sharing-live-and-group-notes.md) — named sharing, group notes, live.
+- [`docs/HANDOFF.md`](docs/HANDOFF.md) and [`docs/PROGRESS.md`](docs/PROGRESS.md) — current state and history.
+- [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) — Cloudflare Tunnel and the hosted service.

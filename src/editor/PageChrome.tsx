@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import type { Lecture } from '../../shared/types';
+import type { Lecture, PaperKind } from '../../shared/types';
 import { api } from '../api';
 import { useBoot } from '../boot';
 import { Menu } from '../Home';
+import { PAPERS, paperName } from '../paper';
 import type { EditorPage, SaveState } from './types';
 
 export function PageChrome({
@@ -10,22 +11,28 @@ export function PageChrome({
   index,
   saveState,
   onInsert,
+  onPaper,
   onDelete,
   onClassmates,
   onLink,
+  allowSlideDelete = false,
 }: {
   page: EditorPage;
   index: number;
   saveState?: SaveState;
-  onInsert: (kind: 'blank' | 'ruled' | 'grid') => void;
+  onInsert: (kind: PaperKind) => void;
+  onPaper: (kind: PaperKind) => void;
   onDelete: () => void;
   onClassmates: () => void;
   onLink: (lectureId: string | null, slideId: string | null) => void;
+  /** A copy or group note can delete a copied slide page; a personal lecture deck cannot. */
+  allowSlideDelete?: boolean;
 }) {
   const { lectures } = useBoot();
   const [linking, setLinking] = useState(false);
   const slideRef = page.kind === 'slide' ? null : page.link;
   const lec = lectures.find((l) => l.id === page.link.lectureId);
+  const isPaper = page.kind !== 'slide' && page.kind !== 'pdf';
   const status =
     page.indexStatus === 'queued' || page.indexStatus === 'indexing'
       ? { cls: 'busy', text: 'Organizing…', title: 'Your notes are being read and linked to the course' }
@@ -74,13 +81,19 @@ export function PageChrome({
         ))}
       {saveState === 'error' && <span className="index-chip warn">Save failed</span>}
       <div className="spacer" />
+      {isPaper && (
+        <Menu
+          label={`Paper: ${paperName(page.kind)}`}
+          slot="paper"
+          glyph="▤"
+          items={PAPERS.map((p) => ({ label: `${page.kind === p.kind ? '✓ ' : ''}${p.name} — ${p.use.toLowerCase()}`, run: () => onPaper(p.kind) }))}
+        />
+      )}
       <Menu
         label="Page options"
         items={[
-          { label: 'Insert ruled page after', run: () => onInsert('ruled') },
-          { label: 'Insert blank page after', run: () => onInsert('blank') },
-          { label: 'Insert grid page after', run: () => onInsert('grid') },
-          ...(page.kind !== 'slide' ? [{ label: 'Delete page', danger: true, run: onDelete }] : []),
+          ...PAPERS.map((p) => ({ label: `Insert ${p.name.toLowerCase()} page after`, run: () => onInsert(p.kind) })),
+          ...(page.kind !== 'slide' || allowSlideDelete ? [{ label: 'Delete page', danger: true, run: onDelete }] : []),
         ]}
       />
       {linking && <LinkPicker lectures={lectures} initial={page.link.lectureId} onPick={(l, s) => (setLinking(false), onLink(l, s))} onClose={() => setLinking(false)} />}

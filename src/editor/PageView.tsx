@@ -1,8 +1,9 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { Citation, Item, Stroke } from '../../shared/types';
+import type { Citation, Item, MemoTint, Stroke } from '../../shared/types';
 import { strokeBounds, strokeInLasso, strokeNear, strokeOpacity, strokePath, pointInPolygon } from '../../shared/ink';
 import { uid } from '../api';
 import { Md } from '../Md';
+import { MEMO_TINTS, MEMO_WIDTH, snapToRule, writingColumn } from '../paper';
 import type { EditorPage, Selection, ToolState } from './types';
 
 const pathCache = new WeakMap<Stroke, string>();
@@ -24,11 +25,23 @@ export const StrokeLayer = memo(function StrokeLayer({ strokes, hidden }: { stro
 
 export function itemBox(it: Item): [number, number, number, number] {
   if (it.type === 'image') return [it.x, it.y, it.x + it.w, it.y + it.h];
-  if (it.type === 'text') {
-    const lines = it.text.split('\n').reduce((n, l) => n + Math.max(1, Math.ceil((l.length * it.size * 0.52) / it.w)), 0);
-    return [it.x, it.y, it.x + it.w, it.y + Math.max(1, lines) * it.size * 1.3 + 8];
+  if (it.type === 'memo') {
+    const lines = it.text.split('\n').reduce((n, l) => n + Math.max(1, Math.ceil((l.length * it.size * 0.55) / (it.w - 20))), 0);
+    const h = Math.max(64, lines * it.size * 1.35 + 20);
+    return [it.x, it.y, it.x + it.w, it.y + (it.collapsed ? 30 : h)];
   }
-  return [it.x, it.y, it.x + it.w, it.y + (it.collapsed ? 40 : 180)];
+  if (it.type === 'text') {
+    const lh = it.lineHeight ?? it.size * 1.5;
+    const lines = it.text.split('\n').reduce((n, l) => n + Math.max(1, Math.ceil((l.length * it.size * 0.52) / it.w)), 0);
+    return [it.x, it.y, it.x + it.w, it.y + Math.max(1, lines) * lh + 8];
+  }
+  // An annotation's height follows its text, citations and credit line, so placing one uses the
+  // space it really takes rather than a guess that lets a long quote run off the sheet.
+  const chars = Math.max(12, Math.floor(it.w / 7.4));
+  const lines = Math.ceil(it.body.replace(/\n/g, '').length / chars) + Math.max(0, it.body.split('\n').length - 1);
+  if (it.collapsed) return [it.x, it.y, it.x + it.w, it.y + 36];
+  const height = 40 + 22 * Math.max(1, lines) + 24 * Math.min(2, it.citations.length) + 34;
+  return [it.x, it.y, it.x + it.w, it.y + height];
 }
 
 export function selectionBox(strokes: Stroke[], items: Item[], sel: { strokeIds: Set<string>; itemIds: Set<string> }) {
@@ -50,11 +63,12 @@ type Props = {
   setEditingText: (id: string | null) => void;
   setSelection: (s: Selection | null) => void;
   commit: (pageId: string, strokes: Stroke[], items: Item[]) => void;
-  onSelectionAction: (action: 'ask' | 'quiz' | 'delete') => void;
+  onDraftItem: (itemId: string, text: string) => void;
+  onSelectionAction: (action: 'ask' | 'delete') => void;
   onCitation: (c: Citation) => void;
 };
 
-export function PageView({ page, scale, tool, selection, editingText, setEditingText, setSelection, commit, onSelectionAction, onCitation }: Props) {
+export function PageView({ page, scale, tool, selection, editingText, setEditingText, setSelection, commit, onDraftItem, onSelectionAction, onCitation }: Props) {
   const stage = useRef<HTMLDivElement>(null);
   const live = useRef<SVGPathElement>(null);
   const lassoPath = useRef<SVGPathElement>(null);
@@ -83,10 +97,50 @@ export function PageView({ page, scale, tool, selection, editingText, setEditing
     if (tool.stylusOnly && e.pointerType === 'touch' && tool.tool !== 'lasso') return; // fingers scroll
     if ((e.target as HTMLElement).closest('[data-interactive]')) return;
     const [x, y] = toPage(e);
+    if (tool.tool === 'memo') {
+      e.preventDefault();
+      // A memo is stuck on the page where the student taps: a small sheet, not a line of text.
+      const w = MEMO_WIDTH;
+      const col = writingColumn(page.width, page.height, page.kind);
+      const left = Math.max(12, Math.min(x - w / 2, page.width - w - 12));
+      const top = Math.max(12, Math.min(y - 24, page.height - 120));
+      const tints = MEMO_TINTS;
+      const it: Item = {
+        id: uid(),
+        type: 'memo',
+        x: Math.round(left),
+        y: Math.round(top),
+        w,
+        text: '',
+        color: '#3d3423',
+        size: 15,
+        // Each new memo takes the next tint, so a page of them reads as a set rather than a rainbow.
+        tint: tints[page.items.filter((i) => i.type === 'memo').length % tints.length]!,
+      };
+      commit(page.id, page.strokes, [...page.items, it]);
+      setEditingText(it.id);
+      return;
+    }
     if (tool.tool === 'text') {
       e.preventDefault(); // keeps focus on the new text box mounted below
-      const left = Math.min(x, page.width - 90);
-      const it: Item = { id: uid(), type: 'text', x: left, y: y - 14, w: Math.max(80, Math.min(420, page.width - left - 10)), text: '', color: tool.color, size: 22 };
+      // Typed text is written on the paper: it starts inside the writing column and on a rule,
+      // and it is exactly as wide as the column, so it reads like a line of writing.
+      const col = writingColumn(page.width, page.height, page.kind);
+      const lineHeight = col.rule && col.rule >= 22 ? col.rule : 33;
+      // Written on a line, not in a box: a hand-sized 19-20px against a 36px rule.
+      const size = Math.max(14, Math.min(20, Math.round(lineHeight * 0.54)));
+      const left = Math.max(col.left, Math.min(x, col.right - 160));
+      const it: Item = {
+        id: uid(),
+        type: 'text',
+        x: left,
+        y: snapToRule(y, page.kind, page.width) - lineHeight,
+        w: Math.max(160, col.right - left),
+        text: '',
+        color: tool.color,
+        size,
+        lineHeight,
+      };
       commit(page.id, page.strokes, [...page.items, it]);
       setEditingText(it.id);
       return;
@@ -208,7 +262,7 @@ export function PageView({ page, scale, tool, selection, editingText, setEditing
     return h;
   }, [erased, offset, sel]);
   const moving = offset && sel ? page.strokes.filter((s) => sel.strokeIds.has(s.id)) : [];
-  const cursor = { pen: 'crosshair', highlighter: 'crosshair', eraser: 'cell', lasso: 'default', text: 'text' }[tool.tool];
+  const cursor = { pen: 'crosshair', highlighter: 'crosshair', eraser: 'cell', lasso: 'default', text: 'text', memo: 'copy' }[tool.tool];
 
   return (
     <div className="page-stage-wrap" style={{ width: page.width * scale, height: page.height * scale }}>
@@ -251,6 +305,28 @@ export function PageView({ page, scale, tool, selection, editingText, setEditing
         {page.items.map((it) => {
           if (it.type === 'image') return null;
           const pos = dragItem?.id === it.id ? dragItem : offset && sel?.itemIds.has(it.id) ? { x: it.x + offset.dx, y: it.y + offset.dy } : it;
+          if (it.type === 'memo')
+            return (
+              <MemoNote
+                key={it.id}
+                item={{ ...it, x: pos.x, y: pos.y }}
+                editing={editingText === it.id}
+                interactive={tool.tool === 'memo' || tool.tool === 'lasso'}
+                onEdit={() => setEditingText(it.id)}
+                onDragStart={(e) => startItemDrag(e, it)}
+                onMove={onMove}
+                onUp={onUp}
+                onTint={(tint) => updateItem(it.id, { tint } as Partial<Item>)}
+                onRemove={() => removeItem(it.id)}
+                onDraft={(text) => onDraftItem(it.id, text)}
+                onDone={(text) => {
+                  setEditingText(null);
+                  if (!text.trim()) removeItem(it.id);
+                  else if (text !== it.text) updateItem(it.id, { text });
+                }}
+                onResize={(w) => updateItem(it.id, { w } as Partial<Item>)}
+              />
+            );
           if (it.type === 'text')
             return (
               <TextBox
@@ -259,18 +335,25 @@ export function PageView({ page, scale, tool, selection, editingText, setEditing
                 editing={editingText === it.id}
                 interactive={tool.tool === 'text'}
                 onEdit={() => setEditingText(it.id)}
+                onDraft={(text) => onDraftItem(it.id, text)}
                 onDone={(text) => {
                   setEditingText(null);
                   if (!text.trim()) removeItem(it.id);
                   else if (text !== it.text) updateItem(it.id, { text });
                 }}
+                onResize={(w) => updateItem(it.id, { w })}
               />
             );
           return (
-            <div key={it.id} data-interactive className={`annotation source-${it.source} ${it.collapsed ? 'collapsed' : ''}`} style={{ left: pos.x, top: pos.y, width: it.w }}>
+            <div
+              key={it.id}
+              data-interactive
+              className={`annotation source-${it.source} ${it.collapsed ? 'collapsed' : ''}`}
+              style={{ left: pos.x, top: pos.y, width: it.w, maxHeight: Math.max(120, page.height - pos.y - 8) }}
+            >
               <div className="annotation-head" onPointerDown={(e) => startItemDrag(e, it)} onPointerMove={onMove} onPointerUp={onUp}>
                 <span className={`basis-dot`} />
-                <span className="annotation-title">{it.title}</span>
+                <span className="annotation-title">{it.forGap || it.title}</span>
                 <button title={it.collapsed ? 'Expand' : 'Collapse'} onPointerDown={(e) => e.stopPropagation()} onClick={() => updateItem(it.id, { collapsed: !it.collapsed })}>
                   {it.collapsed ? '▾' : '▴'}
                 </button>
@@ -280,8 +363,14 @@ export function PageView({ page, scale, tool, selection, editingText, setEditing
               </div>
               {!it.collapsed && (
                 <div className="annotation-body">
-                  <div className="annotation-label">{it.source === 'slide' ? 'From the slides' : it.source === 'peer' ? 'From a classmate’s note' : 'AI explanation'}</div>
-                  <Md text={it.body} />
+                  {/* The student's own wording of the gap, then the borrowed text as a quotation. */}
+                  {it.forGap && it.title !== it.forGap && <div className="annotation-label">{it.title}</div>}
+                  <div className="annotation-quote">
+                    <Md text={it.body} />
+                  </div>
+                  <div className="annotation-label credit">
+                    {it.source === 'slide' ? 'From the slides' : it.source === 'peer' ? 'From a classmate’s note' : 'AI explanation'}
+                  </div>
                   {it.citations.length > 0 && (
                     <div className="citations">
                       {it.citations.map((c, i) => (
@@ -299,7 +388,6 @@ export function PageView({ page, scale, tool, selection, editingText, setEditing
         {sel && !offset && (
           <div className="sel-menu" data-interactive style={{ left: (selBox ?? sel.area)[0], top: Math.max(0, (selBox ?? sel.area)[1] - 52) }}>
             <button onClick={() => onSelectionAction('ask')}>✦ Explain</button>
-            <button onClick={() => onSelectionAction('quiz')}>Quiz me</button>
             {(sel.strokeIds.size > 0 || sel.itemIds.size > 0) && (
               <button className="danger" onClick={() => onSelectionAction('delete')}>
                 Delete
@@ -326,8 +414,145 @@ const Paper = memo(function Paper({ kind, w, h }: { kind: EditorPage['kind']; w:
   return <g pointerEvents="none">{lines}</g>;
 });
 
-function TextBox({ item, editing, interactive, onEdit, onDone }: { item: Extract<Item, { type: 'text' }>; editing: boolean; interactive: boolean; onEdit: () => void; onDone: (t: string) => void }) {
+/**
+ * A memo: a small note the student sticks on the page. It is their own writing, so it behaves like
+ * ink and text — draggable, editable, indexed and shareable — and it is deliberately not a card of
+ * app chrome: paper tint, a hairline edge, a folded corner.
+ */
+function MemoNote({
+  item,
+  editing,
+  interactive,
+  onEdit,
+  onDragStart,
+  onMove,
+  onUp,
+  onTint,
+  onRemove,
+  onDone,
+  onDraft,
+  onResize,
+}: {
+  item: Extract<Item, { type: 'memo' }>;
+  editing: boolean;
+  interactive: boolean;
+  onEdit: () => void;
+  onDragStart: (e: React.PointerEvent) => void;
+  onMove: (e: React.PointerEvent) => void;
+  onUp: () => void;
+  onTint: (t: MemoTint) => void;
+  onRemove: () => void;
+  onDone: (t: string) => void;
+  onDraft: (t: string) => void;
+  onResize: (w: number) => void;
+}) {
   const ref = useRef<HTMLTextAreaElement>(null);
+  const grow = useRef<{ x: number; w: number } | null>(null);
+  const [value, setValue] = useState(item.text);
+  useLayoutEffect(() => {
+    if (editing) {
+      setValue(item.text);
+      ref.current?.focus();
+      ref.current?.select();
+    }
+  }, [editing]); // eslint-disable-line react-hooks/exhaustive-deps
+  const style = { left: item.x, top: item.y, width: item.w, fontSize: item.size, color: item.color };
+  return (
+    <div className={`memo tint-${item.tint} ${editing ? 'editing' : ''} ${interactive ? 'interactive' : ''}`} style={style} {...(interactive ? { 'data-interactive': true } : {})}>
+      {editing ? (
+        <textarea
+          ref={ref}
+          autoFocus
+          data-interactive
+          className="memo-text"
+          value={value}
+          placeholder="Write a memo…"
+          onChange={(e) => {
+            setValue(e.target.value);
+            onDraft(e.target.value);
+          }}
+          onBlur={() => onDone(value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') (e.target as HTMLTextAreaElement).blur();
+            e.stopPropagation();
+          }}
+        />
+      ) : (
+        <>
+          {/* The note's own face: drag anywhere on it, and it is text like any other. */}
+          <div
+            className="memo-text"
+            onPointerDown={(e) => {
+              if (!interactive) return;
+              e.stopPropagation();
+              // A press that moves drags the memo; a press that stays opens it for typing.
+              const start = { x: e.clientX, y: e.clientY };
+              const win = window;
+              const up = (ev: PointerEvent) => {
+                win.removeEventListener('pointerup', up);
+                if (Math.hypot(ev.clientX - start.x, ev.clientY - start.y) < 4) onEdit();
+              };
+              win.addEventListener('pointerup', up);
+              onDragStart(e);
+            }}
+            onPointerMove={onMove}
+            onPointerUp={onUp}
+          >
+            {item.text}
+          </div>
+          {interactive && (
+            <div className="memo-tools">
+              {MEMO_TINTS.map((t) => (
+                <button key={t} className={`memo-tint tint-${t} ${item.tint === t ? 'active' : ''}`} aria-label={`Colour ${t}`} onPointerDown={(e) => e.stopPropagation()} onClick={() => onTint(t)} />
+              ))}
+              <button className="memo-del" title="Remove memo" onPointerDown={(e) => e.stopPropagation()} onClick={onRemove}>
+                ×
+              </button>
+              <span
+                className="memo-grip"
+                onPointerDown={(e) => {
+                  e.stopPropagation();
+                  e.preventDefault();
+                  (e.target as Element).setPointerCapture?.(e.pointerId);
+                  grow.current = { x: e.clientX, w: item.w };
+                }}
+                onPointerMove={(e) => {
+                  if (!grow.current) return;
+                  e.stopPropagation();
+                  onResize(Math.max(120, grow.current.w + (e.clientX - grow.current.x) * 2));
+                }}
+                onPointerUp={(e) => {
+                  e.stopPropagation();
+                  grow.current = null;
+                }}
+              />
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function TextBox({
+  item,
+  editing,
+  interactive,
+  onEdit,
+  onDone,
+  onDraft,
+  onResize,
+}: {
+  item: Extract<Item, { type: 'text' }>;
+  editing: boolean;
+  interactive: boolean;
+  onEdit: () => void;
+  onDone: (t: string) => void;
+  onDraft: (t: string) => void;
+  onResize: (w: number) => void;
+}) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+  const grow = useRef<{ x: number; w: number } | null>(null);
   const [value, setValue] = useState(item.text);
   useLayoutEffect(() => {
     if (editing) {
@@ -335,7 +560,8 @@ function TextBox({ item, editing, interactive, onEdit, onDone }: { item: Extract
       ref.current?.focus();
     }
   }, [editing]); // eslint-disable-line react-hooks/exhaustive-deps
-  const style = { left: item.x, top: item.y, width: item.w, fontSize: item.size, color: item.color };
+  const lh = item.lineHeight ?? Math.round(item.size * 1.5);
+  const style = { left: item.x, top: item.y, width: item.w, fontSize: item.size, lineHeight: `${lh}px`, color: item.color };
   if (editing)
     return (
       <textarea
@@ -343,10 +569,13 @@ function TextBox({ item, editing, interactive, onEdit, onDone }: { item: Extract
         autoFocus
         data-interactive
         className="text-item editing"
-        style={{ ...style, height: Math.max(item.size * 1.6, (value.split('\n').length + 1) * item.size * 1.3) }}
+        style={{ ...style, height: Math.max(lh, (value.split('\n').length + 1) * lh) }}
         value={value}
         placeholder="Type…"
-        onChange={(e) => setValue(e.target.value)}
+        onChange={(e) => {
+          setValue(e.target.value);
+          onDraft(e.target.value);
+        }}
         onBlur={() => onDone(value)}
         onKeyDown={(e) => {
           if (e.key === 'Escape') (e.target as HTMLTextAreaElement).blur();
@@ -355,13 +584,38 @@ function TextBox({ item, editing, interactive, onEdit, onDone }: { item: Extract
       />
     );
   return (
-    <div
-      className={`text-item ${interactive ? 'interactive' : ''}`}
-      {...(interactive ? { 'data-interactive': true } : {})}
-      style={style}
-      onPointerDown={interactive ? (e) => (e.stopPropagation(), onEdit()) : undefined}
-    >
-      {item.text}
-    </div>
+    <>
+      <div
+        className={`text-item ${interactive ? 'interactive' : ''}`}
+        {...(interactive ? { 'data-interactive': true } : {})}
+        style={style}
+        onPointerDown={interactive ? (e) => (e.stopPropagation(), onEdit()) : undefined}
+      >
+        {item.text}
+      </div>
+      {/* Resize from the right edge: a typed note is often wider than it first looked. */}
+      {interactive && (
+        <div
+          data-interactive
+          className="text-grip"
+          style={{ left: item.x + item.w - 6, top: item.y, height: Math.max(lh, item.text.split('\n').length * lh) }}
+          onPointerDown={(e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            (e.target as Element).setPointerCapture?.(e.pointerId);
+            grow.current = { x: e.clientX, w: item.w };
+          }}
+          onPointerMove={(e) => {
+            if (!grow.current) return;
+            e.stopPropagation();
+            onResize(Math.max(160, grow.current.w + (e.clientX - grow.current.x) * 2));
+          }}
+          onPointerUp={(e) => {
+            e.stopPropagation();
+            grow.current = null;
+          }}
+        />
+      )}
+    </>
   );
 }

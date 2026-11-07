@@ -1,5 +1,14 @@
-export type Student = { id: string; name: string; initials: string; color: string };
-export type Course = { id: string; code: string; name: string; description: string };
+export type AccountRole = 'student' | 'professor';
+export type Student = { id: string; name: string; initials: string; color: string; role: AccountRole };
+export type Course = {
+  id: string;
+  code: string;
+  name: string;
+  description: string;
+  instructorName?: string | null;
+  /** This account's role in the course; instructor can publish official slides and go live. */
+  myRole?: 'student' | 'instructor' | null;
+};
 export type CourseSummary = Course & {
   lectureCount: number;
   notebookCount: number;
@@ -34,8 +43,20 @@ export type Slide = {
 };
 
 export type Tool = 'pen' | 'highlighter';
+/** Where a copied object came from. Direct shares are editable, but the AI bank only reads `own`. */
+export type InkOrigin = 'own' | 'shared';
+/** Provenance every stroke and item can carry once a note is copied or co-owned. */
+export type ObjectMeta = {
+  authorId?: string;
+  origin?: InkOrigin;
+  /** The source object's id, for objects copied by a share. */
+  sourceId?: string;
+  /** Set when the owner of this copy edited a shared object; updates leave it alone. */
+  localModified?: boolean;
+  lastEditedBy?: string;
+};
 /** Points are flat [x, y, pressure, ...] in page units (page width = 1000). */
-export type Stroke = { id: string; tool: Tool; color: string; size: number; points: number[] };
+export type Stroke = { id: string; tool: Tool; color: string; size: number; points: number[] } & ObjectMeta;
 export type Citation =
   | { kind: 'slide'; slideId: string; lectureNumber: number; page: number; label: string }
   | { kind: 'entry'; entryId: string; slideId: string; lectureNumber: number; page: number; label: string }
@@ -45,9 +66,38 @@ export type Basis = 'official' | 'peer' | 'ai';
 export type SuggestionSource = 'peer' | 'slide' | 'ai';
 
 export type Item =
-  | { id: string; type: 'text'; x: number; y: number; w: number; text: string; color: string; size: number }
-  | { id: string; type: 'image'; x: number; y: number; w: number; h: number; fileId: string }
-  | {
+  | ({
+      id: string;
+      type: 'text';
+      x: number;
+      y: number;
+      w: number;
+      text: string;
+      color: string;
+      size: number;
+      /** Rule spacing this box was written against, so typed lines sit on the paper instead of over it. */
+      lineHeight?: number;
+    } & ObjectMeta)
+  | ({ id: string; type: 'image'; x: number; y: number; w: number; h: number; fileId: string } & ObjectMeta)
+  /**
+   * A memo: a small note the student sticks onto the page — a reminder, a question to ask, something
+   * from elsewhere. It is the student's own writing, so unlike an annotation it is not excluded from
+   * indexing and it can be shared as their knowledge.
+   */
+  | ({
+      id: string;
+      type: 'memo';
+      x: number;
+      y: number;
+      w: number;
+      text: string;
+      color: string;
+      size: number;
+      /** Tint family, picked from a small set so memos read as one kind of thing. */
+      tint: MemoTint;
+      collapsed?: boolean;
+    } & ObjectMeta)
+  | ({
       id: string;
       type: 'annotation';
       x: number;
@@ -59,9 +109,18 @@ export type Item =
       source: SuggestionSource;
       citations: Citation[];
       collapsed?: boolean;
-    };
+      /** Set when the item was added at a gap: the marker it answers, so the page can draw a tie. */
+      gapId?: string | null;
+      /** The gap in the student's own words, shown above the quoted text. */
+      forGap?: string | null;
+    } & ObjectMeta);
 
-export type PageKind = 'slide' | 'pdf' | 'blank' | 'ruled' | 'grid';
+/** Sticky-note tints. A student's own memos are paper, not UI, so the set stays small and warm. */
+export type MemoTint = 'yellow' | 'pink' | 'blue' | 'green';
+
+/** Paper a student can choose for a notebook. */
+export type PaperKind = 'ruled' | 'grid' | 'blank';
+export type PageKind = 'slide' | 'pdf' | PaperKind;
 export type IndexStatus = 'idle' | 'queued' | 'indexing' | 'indexed' | 'failed';
 export type PageLink = {
   lectureId: string | null;
@@ -77,6 +136,8 @@ export type Page = {
   kind: PageKind;
   slideId: string | null;
   background: string | null; // relative URL to background image
+  /** Server-side raw asset path; not sent to the client (the API strips it). */
+  image?: string | null;
   width: number;
   height: number;
   strokes: Stroke[];
@@ -87,23 +148,69 @@ export type Page = {
   link: PageLink;
   sharedCount: number;
   linkedSlides: number;
+  /** `shared` when this page is a copy received through a direct share. */
+  origin?: InkOrigin;
+  /** The page in the source notebook this copy was made from. */
+  sourcePageId?: string | null;
+  sourceRevision?: number | null;
+  /** Source object ids the recipient erased; a later pull must not bring them back. */
+  sharedTombstones?: string[];
+};
+/** How a received copy relates to the note it came from. */
+export type ShareMode = 'pull' | 'snapshot';
+export type NotebookShare = {
+  id: string;
+  mode: ShareMode;
+  fromName: string;
+  sourceNotebookId: string;
+  sourceRevision: number;
+  currentSourceRevision: number;
+  updatesAvailable: boolean;
+  sourceDeleted: boolean;
+};
+export type NotebookMember = {
+  id: string;
+  name: string;
+  initials: string;
+  color: string;
+  role: 'owner' | 'editor';
+  status: 'active' | 'invited';
+  pageId?: string | null;
+  updatedAt?: string | null;
 };
 export type Notebook = {
   id: string;
   courseId: string;
+  /** The owner/creator. Kept for older clients; the same value as ownerId. */
   studentId: string;
+  ownerId?: string;
   lectureId: string | null;
   title: string;
-  kind: 'lecture' | 'pdf' | 'blank';
+  kind: 'lecture' | 'pdf' | 'blank' | 'shared' | 'group';
   pageCount: number;
   cover: string | null;
   updatedAt: string;
   /** Folder inside "My notes"; null = top level. */
   folderId: string | null;
+  /** Paper new pages are made from. A lecture or PDF notebook keeps its pages' own paper. */
+  paper: PaperKind;
   /** Pages with the student's ink or text (listing only). */
   written?: number;
   /** Most recently edited page with content (listing only). */
   lastPageId?: string | null;
+  /** Content version, bumped on every page change; used by pullable copies. */
+  revision?: number;
+  /** Direct-share provenance, stored on a received copy or a group note grown from one. */
+  shareId?: string | null;
+  sourceNotebookId?: string | null;
+  sourceRevision?: number;
+  shareMode?: ShareMode | null;
+  /** This student's relationship to the notebook. */
+  role?: 'owner' | 'editor';
+  memberCount?: number;
+  members?: NotebookMember[];
+  /** Set when this notebook is a copy received through a direct share. */
+  share?: NotebookShare | null;
 };
 /** A student's own folder inside "My notes" of one course. */
 export type Folder = { id: string; courseId: string; parentId: string | null; name: string };
@@ -129,6 +236,9 @@ export type Deck = {
 export type CourseFiles = {
   /** The folder the decks were seeded into, while it still exists (null once renamed away or deleted). */
   lecturesFolderId: string | null;
+  /** The loose "Shared with me" folder, created on the first received copy. */
+  sharedFolderId?: string | null;
+  unreadShares?: number;
   folders: Folder[];
   notes: Notebook[];
   decks: Deck[];
@@ -204,6 +314,25 @@ export type Suggestion = {
   fragmentId: string | null;
 };
 
+/**
+ * One suggestion anywhere in a notebook, for the browser: the same card, plus where in the notebook
+ * it lives, so a student can see everything waiting for them without scrolling page by page.
+ */
+export type NotebookSuggestion = Suggestion & {
+  pageNumber: number;
+  /** "Slide 12" for a page that came from a deck, "Page 3" for one of the student's own sheets. */
+  pageLabel: string;
+  /** Drives the thumbnail in the list: an image of the page as it is now. */
+  thumb: string;
+};
+
+export type NotebookSuggestions = {
+  notebookId: string;
+  /** Grouped by page, in the notebook's own order, so the list reads like the notebook does. */
+  groups: { pageId: string; pageNumber: number; pageLabel: string; thumb: string; items: NotebookSuggestion[] }[];
+  total: number;
+};
+
 /** A student's own contribution on a page, as the panel lists it for the author. */
 export type OwnNote = {
   id: string;
@@ -222,6 +351,24 @@ export type PageSuggestions = {
 };
 
 export type LectureTopic = { id: string; name: string; slideIds: string[] };
+export type AskMessage = {
+  id: string;
+  role: 'user' | 'assistant';
+  text: string;
+  cards: AskCard[];
+  pageId: string | null;
+  pageLabel: string | null;
+  createdAt: string;
+};
+export type AskSessionSummary = {
+  id: string;
+  notebookId: string;
+  title: string;
+  updatedAt: string;
+  messageCount: number;
+  lastPageLabel: string | null;
+};
+export type AskSession = AskSessionSummary & { messages: AskMessage[] };
 export type AskResult = { id: string; pageId: string; pageRevision: number; cards: AskCard[] };
 
 export type QuizScope = { kind: 'lecture' | 'page' | 'selection'; lectureId: string; pageId?: string };
@@ -239,6 +386,50 @@ export type QuizResult = {
 };
 
 export type RecentNotebook = { id: string; title: string; kind: string; courseId: string; courseCode: string; updatedAt: string; lastPageId: string | null };
+
+/** A copy that has arrived but has not been announced to the recipient yet. */
+export type ShareNotice = {
+  shareId: string;
+  notebookId: string;
+  courseId: string;
+  fromName: string;
+  title: string;
+  mode: ShareMode;
+  kind: 'copy' | 'live';
+  createdAt: string;
+};
+/** A co-edit invitation waiting for the recipient. */
+export type InviteNotice = {
+  notebookId: string;
+  courseId: string;
+  fromName: string;
+  title: string;
+  createdAt: string;
+};
+
+export type LiveSession = {
+  id: string;
+  courseId: string;
+  hostId: string;
+  hostName: string;
+  notebookId: string;
+  title: string;
+  currentPageId: string | null;
+  currentPageLabel: string | null;
+  renderVersion: string;
+  pullable: boolean;
+  startedAt: string;
+  endedAt: string | null;
+  audience: number;
+  /** The copy the viewer will get (or already has) after the session ends. */
+  copyNotebookId?: string | null;
+};
+export type Notices = {
+  shares: ShareNotice[];
+  invites: InviteNotice[];
+  live: LiveSession | null;
+};
+
 export type Bootstrap = {
   recent: RecentNotebook[];
   courses: CourseSummary[];
@@ -246,5 +437,6 @@ export type Bootstrap = {
   course: Course | null;
   lectures: Lecture[];
   students: Student[];
+  me: Student;
   ai: { configured: boolean; model: string | null };
 };

@@ -33,6 +33,7 @@ export async function setup(handler: Handler | null) {
   ensureStudents(store);
   store.upsertCourse(COURSE);
   for (const s of ['thomas', 'alex', 'priya']) store.enroll(s, COURSE.id);
+  store.enroll('professor', COURSE.id, 'instructor');
   const mock = handler ? mockModel(handler) : null;
   const ai = new ModelGateway(handler ? { baseUrl: 'http://mock/v1', key: 'k', model: 'mock' } : {}, mock?.http);
   const { app, jobs } = await buildApp({ store, ai, dataDir, background: false });
@@ -42,7 +43,7 @@ export async function setup(handler: Handler | null) {
   return { app, jobs, store, dataDir, calls: mock?.calls ?? [], pdf };
 }
 
-export async function upload(app: Awaited<ReturnType<typeof setup>>['app'], url: string, file: Buffer, name: string, student = 'thomas') {
+export async function upload(app: Awaited<ReturnType<typeof setup>>['app'], url: string, file: Buffer, name: string, student = 'professor') {
   const boundary = '----notebook' + Math.random().toString(16).slice(2);
   const payload = Buffer.concat([
     Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${name}"\r\nContent-Type: application/pdf\r\n\r\n`),
