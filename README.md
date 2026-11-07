@@ -26,14 +26,14 @@ This repository is the working prototype for **EMIA2020 Fall 2026 — Smart Educ
 
 ## What you need
 
-| Requirement | Notes |
-| --- | --- |
-| **Node.js 24+** | The repo pins engines to `>=24`. Use the checked-in `package-lock.json`. |
-| **npm** | `npm ci` is the supported install; do not commit `node_modules/`. |
-| **poppler-utils** | `pdftoppm`, `pdftotext` and `pdfinfo` turn lecture PDFs into page images and text. |
-| **Python 3** | Only needed when seeding from a `.zip` (the seed uses `zipfile` to extract the PDFs). |
-| **A DeepSeek API key** | Optional to start the app, required for digests, transcription, suggestions, Ask and quizzes. The official endpoint and `deepseek-flash` are the defaults. |
-| **Playwright Chromium** | Optional, only for the browser tests. `npx playwright install chromium` if the default browser is missing. |
+| Requirement             | Notes                                                                                                                                                      |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Node.js 24+**         | The repo pins engines to `>=24`. Use the checked-in `package-lock.json`.                                                                                   |
+| **npm**                 | `npm ci` is the supported install; do not commit `node_modules/`.                                                                                          |
+| **poppler-utils**       | `pdftoppm`, `pdftotext` and `pdfinfo` turn lecture PDFs into page images and text.                                                                         |
+| **Python 3**            | Only needed when seeding from a `.zip` (the seed uses `zipfile` to extract the PDFs).                                                                      |
+| **A DeepSeek API key**  | Optional to start the app, required for digests, transcription, suggestions, Ask and quizzes. The official endpoint and `deepseek-flash` are the defaults. |
+| **Playwright Chromium** | Optional, only for the browser tests. `npx playwright install chromium` if the default browser is missing.                                                 |
 
 On Debian/Ubuntu:
 
@@ -72,11 +72,11 @@ npm run dev:local        # client :5174, API :4312
 
 The seed imports lecture PDFs, renders their slides, asks the model to digest each slide, and imports a handwritten notebook for Alex. It needs a folder (or a Flexcil-style `.zip`) containing PDFs named like this:
 
-| File name | Becomes |
-| --- | --- |
-| `1-intro.pdf`, `2-python.pdf`, … | Lecture 1, 2, … |
-| `12-ethics.pdf` | Lecture 12 |
-| `COMP2211 notes.pdf` | Alex's handwritten notebook |
+| File name                        | Becomes                               |
+| -------------------------------- | ------------------------------------- |
+| `1-intro.pdf`, `2-python.pdf`, … | Lecture 1, 2, …                       |
+| `12-ethics.pdf`                  | Lecture 12                            |
+| `COMP2211 notes.pdf`             | Alex's handwritten notebook           |
 | `supp-model-evaluation-full.pdf` | Lecture 12 supplement (COMP2211 only) |
 
 Files without a leading number (and not ending in `notes.pdf`) are ignored. Rename your PDFs to match, or add the course through the app instead.
@@ -109,15 +109,15 @@ npm run seed -- /path/to/lecture-pdfs
 
 Copy `.env.example` to `.env`. The file is git-ignored; never commit a key.
 
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `LLM_BASE_URL` | `https://api.deepseek.com/v1` | OpenAI-compatible endpoint. |
-| `LLM_API_KEY` | empty | Provider key. Empty means "AI not configured", not a crash. |
-| `LLM_MODEL` | `deepseek-flash` | Must be multimodal (the app sends page images). |
-| `PORT` | `4310` | API port. Vite proxies to this unless `API_PORT` is set. |
-| `DATA_DIR` | `./data` | SQLite, uploads, rendered pages. Keep it out of git. |
-| `INDEX_DELAY_MS` | `6000` | Pause after writing before a page is re-read and shared. |
-| `ALLOWED_ORIGINS` | empty | Extra exact origins allowed to call the API (comma-separated), e.g. a Cloudflare Tunnel hostname. |
+| Variable          | Default                       | Purpose                                                                                           |
+| ----------------- | ----------------------------- | ------------------------------------------------------------------------------------------------- |
+| `LLM_BASE_URL`    | `https://api.deepseek.com/v1` | OpenAI-compatible endpoint.                                                                       |
+| `LLM_API_KEY`     | empty                         | Provider key. Empty means "AI not configured", not a crash.                                       |
+| `LLM_MODEL`       | `deepseek-flash`              | Must be multimodal (the app sends page images).                                                   |
+| `PORT`            | `4310`                        | API port. Vite proxies to this unless `API_PORT` is set.                                          |
+| `DATA_DIR`        | `./data`                      | SQLite, uploads, rendered pages. Keep it out of git.                                              |
+| `INDEX_DELAY_MS`  | `6000`                        | Pause after writing before a page is re-read and shared.                                          |
+| `ALLOWED_ORIGINS` | empty                         | Extra exact origins allowed to call the API (comma-separated), e.g. a Cloudflare Tunnel hostname. |
 
 The e2e suite overrides the LLM variables with its own mock server. It never calls the live provider.
 
@@ -125,29 +125,29 @@ The e2e suite overrides the LLM variables with its own mock server. It never cal
 
 There is no login. Switch identity from the avatar menu in the top right.
 
-| Account | Role | Use it for |
-| --- | --- | --- |
-| **Thomas** | Student | The default student view. Has some writing on lecture 2. |
-| **Alex** | Student | Owns the imported `COMP2211 notes.pdf` notebook and its shared fragments. |
-| **Priya** | Student | Empty student, useful for checking a first-run experience. |
-| **Professor** | Instructor of COMP2211 | Create courses, add official decks, re-digest slides, go live. |
+| Account       | Role                   | Use it for                                                                |
+| ------------- | ---------------------- | ------------------------------------------------------------------------- |
+| **Thomas**    | Student                | The default student view. Has some writing on lecture 2.                  |
+| **Alex**      | Student                | Owns the imported `COMP2211 notes.pdf` notebook and its shared fragments. |
+| **Priya**     | Student                | Empty student, useful for checking a first-run experience.                |
+| **Professor** | Instructor of COMP2211 | Create courses, add official decks, re-digest slides, go live.            |
 
 These identities are **not authentication**. The API accepts an `x-student-id` header, and the server binds to `127.0.0.1`; keep it that way. Course-scoped routes also require `x-course-id` and check enrollment, so do not test sharing by bypassing the headers.
 
 ## Everyday commands
 
-| Command | What it does |
-| --- | --- |
-| `npm run dev` | Client + API with watch, `:5173` → `:4310`. |
-| `npm run dev:local` | Same, on `:5174` → `:4312`, when `:4310` is busy. |
-| `npm run seed -- <folder-or-zip>` | Import lectures and Alex's notebook. |
-| `npm run build` | Typecheck and build the client into `dist/`. |
-| `npm start` | Serve the built app and API on `:4310` (reads `.env`). |
-| `npm run serve` | Watch-and-rebuild supervisor used by the hosted demo. |
-| `npm test` | Unit/API tests with the mock model. |
-| `npm run test:e2e` | Playwright browser scenarios on their own ports. |
-| `npm run check` | `npm test` + typecheck + production build. Run before opening a PR. |
-| `node scripts/live-smoke.mjs` | Optional smoke run against the real provider (costs API calls). |
+| Command                           | What it does                                                        |
+| --------------------------------- | ------------------------------------------------------------------- |
+| `npm run dev`                     | Client + API with watch, `:5173` → `:4310`.                         |
+| `npm run dev:local`               | Same, on `:5174` → `:4312`, when `:4310` is busy.                   |
+| `npm run seed -- <folder-or-zip>` | Import lectures and Alex's notebook.                                |
+| `npm run build`                   | Typecheck and build the client into `dist/`.                        |
+| `npm start`                       | Serve the built app and API on `:4310` (reads `.env`).              |
+| `npm run serve`                   | Watch-and-rebuild supervisor used by the hosted demo.               |
+| `npm test`                        | Unit/API tests with the mock model.                                 |
+| `npm run test:e2e`                | Playwright browser scenarios on their own ports.                    |
+| `npm run check`                   | `npm test` + typecheck + production build. Run before opening a PR. |
+| `node scripts/live-smoke.mjs`     | Optional smoke run against the real provider (costs API calls).     |
 
 ## How the app works
 
@@ -232,17 +232,17 @@ node scripts/live-smoke.mjs   # against a running, seeded server; costs API call
 
 ## Troubleshooting
 
-| Symptom | Fix |
-| --- | --- |
-| `EADDRINUSE` on 4310 | Something (often the hosted demo) already owns the port. Use `npm run dev:local`, or stop the other process. |
-| `pdftoppm: not found` while seeding | Install `poppler-utils` and reopen the shell. |
-| `AI not configured` on every AI action | Set `LLM_API_KEY` in `.env` and restart the server. Seeding without a key imports slides but produces no digests. |
-| Seeding looks stuck | It is making one model call per slide. Watch the `digested X/Y` line; the 15-second tick can hide slow calls. |
-| No course after a reset | Run the seed again, or start the app and create one as **Professor**. |
-| Playwright browser missing | `npx playwright install chromium`, or set `PLAYWRIGHT_CHROMIUM_EXECUTABLE`. |
-| Blank pages after deleting `data/` while the app was running | Stop the app first, delete `data/`, restart, and seed. SQLite and rendered files must disappear together. |
-| A public hostname gets a CORS error | Add the exact `https://…` origin to `ALLOWED_ORIGINS` and restart. |
-| Tests suddenly call the real API | They should not. Check that you did not remove the `env` override in `playwright.config.ts`; the mock lives in `e2e/mock-llm.mjs`. |
+| Symptom                                                      | Fix                                                                                                                                |
+| ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `EADDRINUSE` on 4310                                         | Something (often the hosted demo) already owns the port. Use `npm run dev:local`, or stop the other process.                       |
+| `pdftoppm: not found` while seeding                          | Install `poppler-utils` and reopen the shell.                                                                                      |
+| `AI not configured` on every AI action                       | Set `LLM_API_KEY` in `.env` and restart the server. Seeding without a key imports slides but produces no digests.                  |
+| Seeding looks stuck                                          | It is making one model call per slide. Watch the `digested X/Y` line; the 15-second tick can hide slow calls.                      |
+| No course after a reset                                      | Run the seed again, or start the app and create one as **Professor**.                                                              |
+| Playwright browser missing                                   | `npx playwright install chromium`, or set `PLAYWRIGHT_CHROMIUM_EXECUTABLE`.                                                        |
+| Blank pages after deleting `data/` while the app was running | Stop the app first, delete `data/`, restart, and seed. SQLite and rendered files must disappear together.                          |
+| A public hostname gets a CORS error                          | Add the exact `https://…` origin to `ALLOWED_ORIGINS` and restart.                                                                 |
+| Tests suddenly call the real API                             | They should not. Check that you did not remove the `env` override in `playwright.config.ts`; the mock lives in `e2e/mock-llm.mjs`. |
 
 ## Local production and deployment
 
