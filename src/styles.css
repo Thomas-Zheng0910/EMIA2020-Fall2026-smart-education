@@ -902,11 +902,15 @@ code {
 }
 .text-item.interactive {
   pointer-events: auto;
-  cursor: text;
-  outline: 1px dashed transparent;
+  cursor: move;
+  outline: 1px solid transparent;
 }
 .text-item.interactive:hover {
   outline-color: var(--line-strong);
+}
+.text-item.interactive:focus-within {
+  outline: 2px solid var(--accent);
+  z-index: 4;
 }
 .text-item.editing {
   pointer-events: auto;
@@ -916,7 +920,50 @@ code {
   background: rgba(255, 255, 255, 0.8);
   resize: none;
   padding: 0;
-  overflow: hidden;
+  overflow-y: auto;
+}
+
+.text-note-actions {
+  position: absolute;
+  left: 0;
+  display: none;
+  gap: 4px;
+  line-height: 1;
+  white-space: nowrap;
+}
+.text-item:focus-within .text-note-actions {
+  display: flex;
+}
+.text-note-actions button {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 32px;
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+.text-note-actions button:hover,
+.text-note-actions button:focus-visible {
+  border-color: var(--accent);
+}
+.text-grip {
+  display: none;
+  position: absolute;
+  top: 50%;
+  right: -5px;
+  width: 10px;
+  height: 18px;
+  transform: translateY(-50%);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  background: var(--surface);
+  cursor: ew-resize;
+}
+.text-item:focus-within .text-grip {
+  display: block;
 }
 
 /* ---------- memos: the student's own sticky notes, stuck onto the page */

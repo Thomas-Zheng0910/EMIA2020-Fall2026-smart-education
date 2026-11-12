@@ -16,6 +16,7 @@
     "build": "tsc --noEmit && vite build",
     "serve": "node scripts/serve.mjs",
     "start": "tsx --env-file-if-exists=.env server/index.ts",
+    "demo:hardcoded": "tsx scripts/hardcoded-demo.ts",
     "test": "vitest run",
     "test:e2e": "playwright test",
     "check": "npm test && npm run build",

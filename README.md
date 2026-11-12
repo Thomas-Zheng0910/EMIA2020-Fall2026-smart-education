@@ -11,6 +11,7 @@ This repository is the working prototype for **EMIA2020 Fall 2026 — Smart Educ
 ## Contents
 
 - [What you need](#what-you-need)
+- [Hardcoded Demo](#hardcoded-demo)
 - [Quick start](#quick-start)
 - [Environment variables](#environment-variables)
 - [Demo accounts](#demo-accounts)
@@ -49,7 +50,18 @@ On macOS:
 brew install poppler python3
 ```
 
-The course material is **not** in this repository. The COMP2211 PDFs are large and are not ours to redistribute. You can seed with any folder of lecture PDFs you are allowed to use, or create a course in the app as the Professor and upload decks there.
+The COMP2211 PDFs are large and are not ours to redistribute. You can seed with any folder of lecture PDFs you are allowed to use, or create a course in the app as the Professor and upload decks there.
+
+## Hardcoded Demo
+
+With Node.js 24+ and Poppler installed, run:
+
+```bash
+npm ci
+npm run demo:hardcoded
+```
+
+Open [Four Operations](http://localhost:4313/#course=arith101&view=all). Start with **A student**, then switch to **B student** from the course view. Both accounts can edit their sample notes and use **Save me!** to see preset feedback. The demo needs no API key and saves its changes locally under `data/hardcoded-demo/`. Set `HARDCODED_DEMO_PORT` to use a different port.
 
 ## Quick start
 

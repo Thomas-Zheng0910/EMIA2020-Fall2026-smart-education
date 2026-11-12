@@ -247,6 +247,14 @@ test.describe.serial('notebook workflow', () => {
     await expect(page.locator('.page-stage')).toHaveCount(1);
     await page.getByRole('button', { name: 'Text' }).click();
     await page.locator('.page-stage').click({ position: { x: 100, y: 150 } });
+    await expect(page.locator('textarea.text-item')).toBeFocused();
+    await expect(page.locator('.save-state')).toHaveText('Saved');
+    await page.locator('.page-stage').click({ position: { x: 100, y: 220 } });
+    await expect(page.locator('.text-item')).toHaveCount(1);
+    await page.locator('textarea.text-item').fill('   ');
+    await page.keyboard.press('Escape');
+    await expect(page.locator('.text-item')).toHaveCount(0);
+    await page.locator('.page-stage').click({ position: { x: 100, y: 150 } });
     await page.keyboard.type('Gradient descent minimizes loss');
     await page.locator('.nb-title').click();
     await expect(page.locator('.text-item')).toHaveText('Gradient descent minimizes loss');
@@ -260,6 +268,38 @@ test.describe.serial('notebook workflow', () => {
     await page.reload();
     await expect(page.locator('.text-item')).toHaveText('Gradient descent minimizes loss');
     await expect(page.locator('.link-chip').first()).toContainText('L1', { timeout: 20000 });
+    const textNote = page.locator('.text-item');
+    await expect(page.getByRole('button', { name: 'Delete text note' })).toHaveCount(0);
+    await textNote.click();
+    await expect(textNote).toBeFocused();
+    await expect(page.locator('textarea.text-item')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Delete text note' })).toBeVisible();
+    await textNote.dblclick();
+    await page.locator('textarea.text-item').fill('Gradient descent takes repeated steps');
+    await page.locator('.nb-title').click();
+    await expect(page.locator('.text-item')).toHaveText('Gradient descent takes repeated steps');
+    await expect(page.locator('.save-state')).toHaveText('Saved');
+    await page.reload();
+    await expect(textNote).toHaveText('Gradient descent takes repeated steps');
+    const beforeDrag = await textNote.evaluate((note) => ({ x: (note as HTMLElement).offsetLeft, y: (note as HTMLElement).offsetTop }));
+    const textBox = (await textNote.boundingBox())!;
+    await page.mouse.move(textBox.x + 24, textBox.y + 12);
+    await page.mouse.down();
+    await page.mouse.move(textBox.x + 52, textBox.y + 72, { steps: 8 });
+    await page.mouse.up();
+    await expect.poll(() => textNote.evaluate((note) => (note as HTMLElement).offsetTop)).toBeGreaterThan(beforeDrag.y + 30);
+    await expect(page.locator('.save-state')).toHaveText('Saved');
+    const moved = await textNote.evaluate((note) => ({ x: (note as HTMLElement).offsetLeft, y: (note as HTMLElement).offsetTop }));
+    await page.reload();
+    await expect(textNote).toHaveText('Gradient descent takes repeated steps');
+    expect(await textNote.evaluate((note) => ({ x: (note as HTMLElement).offsetLeft, y: (note as HTMLElement).offsetTop }))).toEqual(moved);
+    await expect(page.getByRole('button', { name: 'Delete text note' })).toHaveCount(0);
+    await textNote.click();
+    await page.getByRole('button', { name: 'Delete text note' }).click();
+    await expect(page.locator('.text-item')).toHaveCount(0);
+    await expect(page.locator('.save-state')).toHaveText('Saved');
+    await page.reload();
+    await expect(page.locator('.text-item')).toHaveCount(0);
   });
 
   test('typed text survives leaving while the box is still focused', async ({ page }) => {
@@ -330,6 +370,7 @@ test.describe.serial('notebook workflow', () => {
     await expect(page.locator('.memo')).toHaveCount(2);
     const classes = await page.locator('.memo').evaluateAll((els) => els.map((e) => e.className));
     expect(new Set(classes.map((c) => /tint-\w+/.exec(c)?.[0])).size).toBe(2);
+    await expect(page.locator('.save-state')).toHaveText('Saved');
     await page.reload();
     await expect(page.locator('.memo')).toHaveCount(2);
   });
@@ -551,7 +592,7 @@ test.describe.serial('notebook workflow', () => {
     await ghost.focus();
     await page.keyboard.press('Escape');
     await expect(page.locator('.page-slot').nth(1).locator('.inline-ghost')).toHaveCount(0);
-    await expect(page.locator('.annotation')).toHaveCount(0);
+    await expect(page.locator('.page-slot').nth(1).locator('.annotation')).toHaveCount(0);
     // Escape is not a judgement: the suggestion is back next time the page is opened.
     await page.reload();
     await expect(page.locator('.page-slot').nth(1).locator('.inline-ghost')).toBeVisible({ timeout: 60000 });

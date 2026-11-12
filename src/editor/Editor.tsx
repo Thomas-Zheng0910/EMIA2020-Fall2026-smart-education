@@ -7,6 +7,7 @@ import { PageView, StrokeLayer, selectionBox, itemBox } from './PageView';
 import { Toolbar } from './Toolbar';
 import { InlineGhost, MarginMarkers, SuggestionCard, LassoPopover, SuggestionsPanel, unanswered, useSuggestions, type AddFn } from '../panel/Panel';
 import { SourceViewer } from '../panel/SourceViewer';
+import { DemoFeedback } from '../panel/DemoFeedback';
 import { PageChrome } from './PageChrome';
 import { useBoot } from '../boot';
 import { lastPage, readMigrated } from '../ui';
@@ -70,6 +71,10 @@ export function Editor({ notebookId, onBack, onToast }: { notebookId: string; on
     open: readMigrated('notebook.panel') === 'open' && window.innerWidth > 1100,
   });
   const [panelTab, setPanelTab] = useState<'ask' | 'suggestions'>('ask');
+  const [demoPanelOpen, setDemoPanelOpen] = useState(false);
+  const demoLecture = import.meta.env.VITE_ARITHMETIC_DEMO === '1' && notebook?.courseId === 'arith101' && notebook.kind === 'lecture';
+  const demoFeedback = demoLecture && (notebook.studentId === 'alex' || notebook.studentId === 'thomas');
+  const panelOpen = demoLecture ? demoFeedback && demoPanelOpen : panel.open;
   const setPanel = (next: { open: boolean } | ((p: { open: boolean }) => { open: boolean })) =>
     setPanelState((prev) => {
       const v = typeof next === 'function' ? next(prev) : next;
@@ -217,11 +222,13 @@ export function Editor({ notebookId, onBack, onToast }: { notebookId: string; on
         );
         pagesRef.current = pagesRef.current.map((p) => (p.id === pid ? { ...p, ...next, revision: res.revision } : p));
       } else {
+        const latest = pagesRef.current.find((p) => p.id === pid) ?? page;
+        const next = stillDirty ? withDrafts(latest, pid) : sent;
         setPages((ps) =>
-          ps.map((p) => (p.id === pid ? { ...p, strokes: sent.strokes, items: sent.items, revision: res.revision, indexStatus: 'queued' } : p)),
+          ps.map((p) => (p.id === pid ? { ...p, ...next, revision: res.revision, indexStatus: 'queued' } : p)),
         );
         pagesRef.current = pagesRef.current.map((p) =>
-          (p.id === pid ? { ...p, strokes: sent.strokes, items: sent.items, revision: res.revision, indexStatus: 'queued' } : p),
+          (p.id === pid ? { ...p, ...next, revision: res.revision, indexStatus: 'queued' } : p),
         );
       }
       for (const it of sent.items) {
@@ -849,7 +856,7 @@ export function Editor({ notebookId, onBack, onToast }: { notebookId: string; on
   if (!notebook) return <div className="center-message">Opening notebook…</div>;
 
   return (
-    <div className={`editor ${panel.open ? 'panel-open' : ''}`}>
+    <div className={`editor ${panelOpen ? 'panel-open' : ''}`}>
       <header className="editor-top">
         <button className="icon-btn" onClick={leaveEditor} title="Back to course" aria-label="Back to course">
           <ChevronLeft size={19} />
@@ -898,17 +905,29 @@ export function Editor({ notebookId, onBack, onToast }: { notebookId: string; on
         >
           <Share2 size={15} aria-hidden /> Share
         </button>
-        <button
-          className={`btn ghost panel-toggle ${panel.open ? 'active' : ''}`}
-          onClick={() => {
-            if (!panel.open) setPanelTab('ask');
-            setPanel((p) => ({ ...p, open: !p.open }));
-          }}
-          aria-expanded={panel.open}
-          title={panel.open ? 'Hide Ask and suggestions' : 'Ask about this page, and see suggestions'}
-        >
-          {panel.open ? '✕ Ask' : '✦ Ask'}
-        </button>
+        {demoFeedback && (
+          <button
+            type="button"
+            className={`btn ghost panel-toggle ${demoPanelOpen ? 'active' : ''}`}
+            onClick={() => setDemoPanelOpen((open) => !open)}
+            aria-expanded={demoPanelOpen}
+          >
+            Save me!
+          </button>
+        )}
+        {!demoLecture && (
+          <button
+            className={`btn ghost panel-toggle ${panel.open ? 'active' : ''}`}
+            onClick={() => {
+              if (!panel.open) setPanelTab('ask');
+              setPanel((p) => ({ ...p, open: !p.open }));
+            }}
+            aria-expanded={panel.open}
+            title={panel.open ? 'Hide Ask and suggestions' : 'Ask about this page, and see suggestions'}
+          >
+            {panel.open ? '✕ Ask' : '✦ Ask'}
+          </button>
+        )}
       </header>
       {live && (
         <div className="live-banner">
@@ -1023,6 +1042,10 @@ export function Editor({ notebookId, onBack, onToast }: { notebookId: string; on
                     editingText={editingText}
                     setEditingText={setEditingText}
                     commit={commit}
+                    onCreateText={(item) => {
+                      const latest = pagesRef.current.find((page) => page.id === p.id);
+                      if (latest) commit(p.id, latest.strokes, [...latest.items, item]);
+                    }}
                     onDraftItem={(itemId, text) => draftItem(p.id, itemId, text)}
                     onSelectionAction={selectionAction}
                     onCitation={setSource}
@@ -1091,7 +1114,7 @@ export function Editor({ notebookId, onBack, onToast }: { notebookId: string; on
             </button>
           </div>
         </main>
-        <div className={`zoom-float ${panel.open ? 'with-panel' : ''}`} role="group" aria-label="Zoom">
+        <div className={`zoom-float ${panelOpen ? 'with-panel' : ''}`} role="group" aria-label="Zoom">
           <button onClick={() => setZoom((z) => Math.max(0.4, +(z - 0.1).toFixed(2)))} aria-label="Zoom out">
             −
           </button>
@@ -1102,7 +1125,18 @@ export function Editor({ notebookId, onBack, onToast }: { notebookId: string; on
             +
           </button>
         </div>
-        {panel.open && currentPage && (
+        {demoFeedback && demoPanelOpen && (
+          <DemoFeedback
+            slide={currentPage?.kind === 'slide' ? currentPage.link.slidePage ?? null : null}
+            commonConfusionOnly={notebook.studentId === 'thomas'}
+            onGoToSlide={(slide) => {
+              const target = pages.find((page) => page.kind === 'slide' && page.link.slidePage === slide);
+              if (target) pickPage(target.id);
+            }}
+            onClose={() => setDemoPanelOpen(false)}
+          />
+        )}
+        {!demoLecture && panel.open && currentPage && (
           <SuggestionsPanel
             page={currentPage}
             notebook={notebook}

@@ -1,4 +1,5 @@
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react';
+import { Pencil, Trash2 } from 'lucide-react';
 import type { Citation, Item, MemoTint, Stroke } from '../../shared/types';
 import { strokeBounds, strokeInLasso, strokeNear, strokeOpacity, strokePath, pointInPolygon } from '../../shared/ink';
 import { uid } from '../api';
@@ -54,21 +55,25 @@ export function selectionBox(strokes: Stroke[], items: Item[], sel: { strokeIds:
   return b as [number, number, number, number] | null;
 }
 
+type DragItemPosition = { id: string; x: number; y: number };
+type TextItem = Extract<Item, { type: 'text' }>;
+
 type Props = {
   page: EditorPage;
   scale: number;
   tool: ToolState;
   selection: Selection | null;
   editingText: string | null;
-  setEditingText: (id: string | null) => void;
+  setEditingText: Dispatch<SetStateAction<string | null>>;
   setSelection: (s: Selection | null) => void;
   commit: (pageId: string, strokes: Stroke[], items: Item[]) => void;
+  onCreateText: (item: TextItem) => void;
   onDraftItem: (itemId: string, text: string) => void;
   onSelectionAction: (action: 'ask' | 'delete') => void;
   onCitation: (c: Citation) => void;
 };
 
-export function PageView({ page, scale, tool, selection, editingText, setEditingText, setSelection, commit, onDraftItem, onSelectionAction, onCitation }: Props) {
+export function PageView({ page, scale, tool, selection, editingText, setEditingText, setSelection, commit, onCreateText, onDraftItem, onSelectionAction, onCitation }: Props) {
   const stage = useRef<HTMLDivElement>(null);
   const live = useRef<SVGPathElement>(null);
   const lassoPath = useRef<SVGPathElement>(null);
@@ -77,12 +82,23 @@ export function PageView({ page, scale, tool, selection, editingText, setEditing
     | { kind: 'erase'; removed: Set<string> }
     | { kind: 'lasso'; poly: number[][] }
     | { kind: 'move'; x: number; y: number; dx: number; dy: number }
-    | { kind: 'drag-item'; id: string; x: number; y: number; ox: number; oy: number }
+    | {
+        kind: 'drag-item';
+        id: string;
+        x: number;
+        y: number;
+        ox: number;
+        oy: number;
+        bounds?: { maxX: number; maxY: number };
+        position?: DragItemPosition;
+      }
     | null
   >(null);
   const [erased, setErased] = useState<Set<string>>(new Set());
   const [offset, setOffset] = useState<{ dx: number; dy: number } | null>(null);
-  const [dragItem, setDragItem] = useState<{ id: string; x: number; y: number } | null>(null);
+  const [dragItem, setDragItem] = useState<DragItemPosition | null>(null);
+  const [pendingText, setPendingText] = useState<TextItem | null>(null);
+  const visibleItems = pendingText?.id === editingText ? [...page.items, pendingText] : page.items;
   const sel = selection?.pageId === page.id ? selection : null;
   const selBox = useMemo(() => (sel ? selectionBox(page.strokes, page.items, sel) : null), [sel, page.strokes, page.items]);
 
@@ -123,25 +139,33 @@ export function PageView({ page, scale, tool, selection, editingText, setEditing
     }
     if (tool.tool === 'text') {
       e.preventDefault(); // keeps focus on the new text box mounted below
+      const active = document.activeElement;
+      if (active instanceof HTMLTextAreaElement && active.matches('.text-item.editing')) active.blur();
       // Typed text is written on the paper: it starts inside the writing column and on a rule,
       // and it is exactly as wide as the column, so it reads like a line of writing.
       const col = writingColumn(page.width, page.height, page.kind);
       const lineHeight = col.rule && col.rule >= 22 ? col.rule : 33;
       // Written on a line, not in a box: a hand-sized 19-20px against a 36px rule.
       const size = Math.max(14, Math.min(20, Math.round(lineHeight * 0.54)));
-      const left = Math.max(col.left, Math.min(x, col.right - 160));
-      const it: Item = {
+      const onSlide = page.kind === 'slide' || page.kind === 'pdf';
+      const slideWidth = Math.min(300, page.width - 32);
+      const left = onSlide
+        ? Math.max(16, Math.min(x, page.width - slideWidth - 16))
+        : Math.max(col.left, Math.min(x, col.right - 160));
+      const top = onSlide ? Math.max(0, Math.min(y, page.height - lineHeight)) : snapToRule(y, page.kind, page.width) - lineHeight;
+      const it: TextItem = {
         id: uid(),
         type: 'text',
         x: left,
-        y: snapToRule(y, page.kind, page.width) - lineHeight,
-        w: Math.max(160, col.right - left),
+        y: top,
+        w: onSlide ? slideWidth : Math.max(160, col.right - left),
         text: '',
         color: tool.color,
         size,
         lineHeight,
       };
-      commit(page.id, page.strokes, [...page.items, it]);
+      // Keep the placeholder out of the notebook until it contains text.
+      setPendingText(it);
       setEditingText(it.id);
       return;
     }
@@ -199,7 +223,20 @@ export function PageView({ page, scale, tool, selection, editingText, setEditing
       setOffset({ dx: g.dx, dy: g.dy });
     } else if (g.kind === 'drag-item') {
       const [x, y] = toPage(e);
-      setDragItem({ id: g.id, x: g.ox + x - g.x, y: g.oy + y - g.y });
+      const dx = x - g.x;
+      const dy = y - g.y;
+      if (g.bounds && Math.hypot(dx, dy) * scale < 3) {
+        g.position = undefined;
+      } else {
+        const left = g.ox + dx;
+        const top = g.oy + dy;
+        g.position = {
+          id: g.id,
+          x: g.bounds ? Math.max(0, Math.min(left, g.bounds.maxX)) : left,
+          y: g.bounds ? Math.max(0, Math.min(top, g.bounds.maxY)) : top,
+        };
+      }
+      setDragItem(g.position ?? null);
     }
   };
 
@@ -237,19 +274,20 @@ export function PageView({ page, scale, tool, selection, editingText, setEditing
       commit(page.id, strokes, items);
       setSelection({ ...sel, area: [sel.area[0] + g.dx, sel.area[1] + g.dy, sel.area[2] + g.dx, sel.area[3] + g.dy] });
     } else if (g.kind === 'drag-item') {
-      setDragItem((d) => {
-        if (d) commit(page.id, page.strokes, page.items.map((it) => (it.id === d.id ? { ...it, x: d.x, y: d.y } : it)));
-        return null;
-      });
+      setDragItem(null);
+      const position = g.position;
+      if (position && (position.x !== g.ox || position.y !== g.oy)) {
+        commit(page.id, page.strokes, page.items.map((it) => (it.id === position.id ? { ...it, x: position.x, y: position.y } : it)));
+      }
     }
   };
 
-  const startItemDrag = (e: React.PointerEvent, it: Item) => {
+  const startItemDrag = (e: React.PointerEvent, it: Item, bounds?: { maxX: number; maxY: number }) => {
     e.stopPropagation();
     e.preventDefault();
     (e.target as Element).setPointerCapture?.(e.pointerId);
     const [x, y] = toPage(e);
-    gesture.current = { kind: 'drag-item', id: it.id, x, y, ox: it.x, oy: it.y };
+    gesture.current = { kind: 'drag-item', id: it.id, x, y, ox: it.x, oy: it.y, bounds };
   };
   const updateItem = (id: string, patch: Partial<Item>, record = true) => {
     if (record) commit(page.id, page.strokes, page.items.map((it) => (it.id === id ? ({ ...it, ...patch } as Item) : it)));
@@ -302,7 +340,7 @@ export function PageView({ page, scale, tool, selection, editingText, setEditing
           )}
           {sel && !selBox && <rect className="sel-rect" x={sel.area[0]} y={sel.area[1]} width={sel.area[2] - sel.area[0]} height={sel.area[3] - sel.area[1]} />}
         </svg>
-        {page.items.map((it) => {
+        {visibleItems.map((it) => {
           if (it.type === 'image') return null;
           const pos = dragItem?.id === it.id ? dragItem : offset && sel?.itemIds.has(it.id) ? { x: it.x + offset.dx, y: it.y + offset.dy } : it;
           if (it.type === 'memo')
@@ -334,11 +372,27 @@ export function PageView({ page, scale, tool, selection, editingText, setEditing
                 item={{ ...it, x: pos.x, y: pos.y }}
                 editing={editingText === it.id}
                 interactive={tool.tool === 'text'}
+                scale={scale}
+                pageWidth={page.width}
+                pageHeight={page.height}
+                onMoveStart={(e) => startItemDrag(e, it, {
+                  maxX: page.width - it.w,
+                  maxY: page.height - e.currentTarget.offsetHeight,
+                })}
                 onEdit={() => setEditingText(it.id)}
-                onDraft={(text) => onDraftItem(it.id, text)}
+                onRemove={() => removeItem(it.id)}
+                onDraft={(text) => {
+                  if (it.id !== pendingText?.id) {
+                    onDraftItem(it.id, text);
+                  } else if (text.trim()) {
+                    onCreateText({ ...it, text });
+                    setPendingText(null);
+                  }
+                }}
                 onDone={(text) => {
-                  setEditingText(null);
-                  if (!text.trim()) removeItem(it.id);
+                  setEditingText((active) => active === it.id ? null : active);
+                  if (it.id === pendingText?.id) setPendingText(null);
+                  else if (!text.trim()) removeItem(it.id);
                   else if (text !== it.text) updateItem(it.id, { text });
                 }}
                 onResize={(w) => updateItem(it.id, { w })}
@@ -538,7 +592,12 @@ function TextBox({
   item,
   editing,
   interactive,
+  scale,
+  pageWidth,
+  pageHeight,
+  onMoveStart,
   onEdit,
+  onRemove,
   onDone,
   onDraft,
   onResize,
@@ -546,7 +605,12 @@ function TextBox({
   item: Extract<Item, { type: 'text' }>;
   editing: boolean;
   interactive: boolean;
+  scale: number;
+  pageWidth: number;
+  pageHeight: number;
+  onMoveStart: (e: React.PointerEvent<HTMLDivElement>) => void;
   onEdit: () => void;
+  onRemove: () => void;
   onDone: (t: string) => void;
   onDraft: (t: string) => void;
   onResize: (w: number) => void;
@@ -562,6 +626,12 @@ function TextBox({
   }, [editing]); // eslint-disable-line react-hooks/exhaustive-deps
   const lh = item.lineHeight ?? Math.round(item.size * 1.5);
   const style = { left: item.x, top: item.y, width: item.w, fontSize: item.size, lineHeight: `${lh}px`, color: item.color };
+  useLayoutEffect(() => {
+    const input = ref.current;
+    if (!input) return;
+    input.style.height = '0px';
+    input.style.height = `${Math.max(lh, input.scrollHeight)}px`;
+  }, [editing, value, item.w, lh]);
   if (editing)
     return (
       <textarea
@@ -569,7 +639,7 @@ function TextBox({
         autoFocus
         data-interactive
         className="text-item editing"
-        style={{ ...style, height: Math.max(lh, (value.split('\n').length + 1) * lh) }}
+        style={{ ...style, maxHeight: Math.max(lh, pageHeight - item.y) }}
         value={value}
         placeholder="Type…"
         onChange={(e) => {
@@ -584,38 +654,54 @@ function TextBox({
       />
     );
   return (
-    <>
-      <div
-        className={`text-item ${interactive ? 'interactive' : ''}`}
-        {...(interactive ? { 'data-interactive': true } : {})}
-        style={style}
-        onPointerDown={interactive ? (e) => (e.stopPropagation(), onEdit()) : undefined}
-      >
-        {item.text}
-      </div>
-      {/* Resize from the right edge: a typed note is often wider than it first looked. */}
+    <div
+      className={`text-item ${interactive ? 'interactive' : ''}`}
+      data-interactive={interactive || undefined}
+      tabIndex={interactive ? 0 : undefined}
+      style={style}
+      onPointerDown={interactive ? (e) => {
+        if (e.target !== e.currentTarget || e.button !== 0) return;
+        e.currentTarget.focus({ preventScroll: true });
+        onMoveStart(e);
+      } : undefined}
+      onDoubleClick={interactive ? (e) => {
+        if (e.target === e.currentTarget) onEdit();
+      } : undefined}
+      onKeyDown={interactive ? (e) => {
+        if (e.target !== e.currentTarget) return;
+        if (e.key === 'Enter') onEdit();
+        else if (e.key === 'Delete' || e.key === 'Backspace') onRemove();
+        else if (e.key === 'Escape') e.currentTarget.blur();
+        else return;
+        e.preventDefault();
+        e.stopPropagation();
+      } : undefined}
+    >
+      {item.text}
       {interactive && (
-        <div
-          data-interactive
-          className="text-grip"
-          style={{ left: item.x + item.w - 6, top: item.y, height: Math.max(lh, item.text.split('\n').length * lh) }}
-          onPointerDown={(e) => {
-            e.stopPropagation();
-            e.preventDefault();
-            (e.target as Element).setPointerCapture?.(e.pointerId);
-            grow.current = { x: e.clientX, w: item.w };
-          }}
-          onPointerMove={(e) => {
-            if (!grow.current) return;
-            e.stopPropagation();
-            onResize(Math.max(160, grow.current.w + (e.clientX - grow.current.x) * 2));
-          }}
-          onPointerUp={(e) => {
-            e.stopPropagation();
-            grow.current = null;
-          }}
-        />
+        <>
+          <div className="text-note-actions" style={{ top: item.y < 36 ? '100%' : -34 }}>
+            <button type="button" title="Edit text note" aria-label="Edit text note" onClick={onEdit}><Pencil size={15} /></button>
+            <button type="button" title="Delete text note" aria-label="Delete text note" onClick={onRemove}><Trash2 size={15} /></button>
+          </div>
+          <div
+            className="text-grip"
+            title="Drag to resize"
+            onPointerDown={(e) => {
+              e.stopPropagation();
+              e.preventDefault();
+              e.currentTarget.setPointerCapture(e.pointerId);
+              grow.current = { x: e.clientX, w: item.w };
+            }}
+            onPointerMove={(e) => {
+              if (!grow.current) return;
+              const width = grow.current.w + (e.clientX - grow.current.x) / scale;
+              onResize(Math.min(pageWidth - item.x, Math.max(100, width)));
+            }}
+            onLostPointerCapture={() => { grow.current = null; }}
+          />
+        </>
       )}
-    </>
+    </div>
   );
 }
